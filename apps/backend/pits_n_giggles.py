@@ -125,7 +125,10 @@ class PngRunner:
         """
 
         log_str = "Starting F1 telemetry server. Open one of the below addresses in your browser\n"
-        ip_addresses = self._getLocalIpAddresses()
+        if self.m_config.Network.bind_address == "0.0.0.0":
+            ip_addresses = self._getLocalIpAddresses()
+        else:
+            ip_addresses = {self.m_config.Network.bind_address}
         for ip_addr in ip_addresses:
             # pylint: disable=no-member
             log_str += f"    {self.m_config.HTTPS.proto}://{ip_addr}:{self.m_config.Network.server_port}\n"

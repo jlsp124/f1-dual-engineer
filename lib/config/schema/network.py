@@ -87,16 +87,17 @@ class NetworkSettings(ConfigDiffMixin, BaseModel):
     )
 
     bind_address: str = Field(
-        default="0.0.0.0",
-        description="Server Bind Address",
+        default="127.0.0.1",
+        description="Web Dashboard Bind Address",
         json_schema_extra={
             "ui": {
                 "type": "text_box",
                 "ext_info": [
-                    "IP address the HTTP and UDP servers bind to.\n"
-                    "Use '0.0.0.0' to allow LAN access (default).\n"
-                    "Use '127.0.0.1' to restrict to this machine only.\n"
-                    "WARNING: '0.0.0.0' exposes the server to all devices on your network.\n"
+                    "IP address used by the HTTP dashboards.\n"
+                    "Use '127.0.0.1' for laptop-only access (safe default).\n"
+                    "Use '0.0.0.0' only when you intentionally want dashboard access from your LAN.\n"
+                    "The F1 UDP listener remains available on the configured telemetry port so consoles can send data.\n"
+                    "WARNING: '0.0.0.0' exposes dashboards to all devices on your network.\n"
                     "Only IPv4 addresses are supported."
                 ]
             }

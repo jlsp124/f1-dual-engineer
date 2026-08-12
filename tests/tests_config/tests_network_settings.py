@@ -272,7 +272,7 @@ class TestNetworkSettings(TestF1ConfigBase):
 
     def test_bind_address_default(self):
         settings = NetworkSettings()
-        self.assertEqual(str(settings.bind_address), "0.0.0.0")
+        self.assertEqual(str(settings.bind_address), "127.0.0.1")
 
     def test_bind_address_valid(self):
         NetworkSettings(bind_address="127.0.0.1")

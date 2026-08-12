@@ -22,6 +22,6 @@
 
 # ----------------------------------------------------------------------------------------------------------------------
 
-APP_VERSION = "4.3.0"
-APP_NAME_SNAKE = "pits_n_giggles"
-APP_NAME = "Pits n' Giggles"
+APP_VERSION = "0.1.0"
+APP_NAME_SNAKE = "f1_dual_engineer"
+APP_NAME = "F1 Dual Engineer"

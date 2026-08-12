@@ -68,19 +68,19 @@ poetry run python -m apps.dev_tools.telemetry_replayer --file-name example.f1pca
 
 ## 🔒 Network Bind Address
 
-By default, the server binds to `0.0.0.0`, which makes it accessible to **all devices on your local network**. This is intentional — the tool is designed for LAN use so that tablets, phones, and other PCs can access the dashboard.
+By default, the web dashboards bind to `127.0.0.1`, so only the engineer laptop can open them. The F1 UDP listener still listens on the configured telemetry port on all interfaces, allowing a console or another PC on the LAN to send telemetry to the laptop.
 
-If you want to restrict access to only the local machine, set `bind_address` to `"127.0.0.1"` in your `png_config.json`:
+To intentionally allow another trusted LAN device to open the dashboards, set `bind_address` to `"0.0.0.0"` in your `png_config.json`:
 
 ```json
 {
   "Network": {
-    "bind_address": "127.0.0.1"
+    "bind_address": "0.0.0.0"
   }
 }
 ```
 
-> **⚠️ Security Warning:** When `bind_address` is `0.0.0.0`, the HTTP server and UDP listener are reachable by anyone on your network. Do not use this setting on untrusted networks unless you understand the implications.
+> **Security Warning:** When `bind_address` is `0.0.0.0`, the HTTP dashboards are reachable by anyone on your network. Do not use this setting on untrusted networks. Never expose the dashboard port directly to the public internet.
 
 ---
 

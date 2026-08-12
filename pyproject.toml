@@ -1,8 +1,8 @@
 [project]
-name = "pits-n-giggles"
-description = "F1 Sim Racing Telemetry Analysis"
+name = "f1-dual-engineer"
+description = "Dual-driver F1 25 telemetry, live race engineering, coaching, exports and career analytics"
 authors = [
-    {name = "Ashwin Natarajan",email = "ashwin.nat@gmail.com"}
+    {name = "F1 Dual Engineer contributors"}
 ]
 license = {text = "MIT"}
 readme = "README.md"

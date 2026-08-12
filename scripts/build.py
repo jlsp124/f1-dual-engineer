@@ -29,7 +29,9 @@ import shutil
 import time
 from pathlib import Path
 
-APP_NAME = "pits_n_giggles"  # or load from the spec file dynamically if needed
+from meta.meta import APP_NAME as PRODUCT_NAME, APP_NAME_SNAKE
+
+APP_NAME = APP_NAME_SNAKE
 COLLECT_DIR_NAME = f"{APP_NAME}_build_tmp"
 
 def remove_dir_if_exists(path: str):
@@ -58,7 +60,7 @@ def main():
         "VITE_EXTERNAL_LINK_TEMPLATE": "/legacy/{slug}",
         "VITE_EXTERNAL_LINK_LABEL": "Legacy View",
         "VITE_DISABLE_ANALYTICS": "true",
-        "VITE_APP_NAME": "Pits n' Giggles",
+        "VITE_APP_NAME": PRODUCT_NAME,
         # Prevent MSYS2/Git Bash from converting POSIX paths (e.g. /legacy/{slug})
         # to Windows paths (e.g. C:/Program Files/Git/legacy/{slug}).
         "MSYS_NO_PATHCONV": "1",

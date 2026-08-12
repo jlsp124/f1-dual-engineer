@@ -27,6 +27,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from .capture import CaptureSettings
 from .diff import ConfigDiffMixin
 from .display import DisplaySettings
+from .engineer import EngineerSettings
 from .forwarding import ForwardingSettings, _LOCALHOST_ALIASES
 from .https import HttpsSettings
 from .hud import HudSettings
@@ -45,6 +46,7 @@ class PngSettings(ConfigDiffMixin, BaseModel):
     Network: NetworkSettings = Field(default_factory=NetworkSettings, description="Network")
     Capture: CaptureSettings = Field(default_factory=CaptureSettings, description="Save Data")
     Display: DisplaySettings = Field(default_factory=DisplaySettings, description="Display")
+    Engineer: EngineerSettings = Field(default_factory=EngineerSettings, description="Dual Driver Engineer")
     Privacy: PrivacySettings = Field(default_factory=PrivacySettings, description="Privacy")
     Forwarding: ForwardingSettings = Field(default_factory=ForwardingSettings, description="UDP Forwarding")
     StreamOverlay: StreamOverlaySettings = Field(default_factory=StreamOverlaySettings, description="Stream Overlay")
