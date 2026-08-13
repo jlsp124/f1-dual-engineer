@@ -52,8 +52,14 @@ jobs:
         shell: pwsh
         run: |
           $exe = Get-Item "dist\f1_dual_engineer_*.exe"
+          $marker = "f1_dual_engineer_smoke_test.txt"
+          Remove-Item -LiteralPath $marker -ErrorAction SilentlyContinue
           & $exe.FullName --smoke-test hello-smoke
-          if ((Get-Content "f1_dual_engineer_smoke_test.txt" -Raw) -ne "hello-smoke") {
+          $deadline = (Get-Date).AddSeconds(20)
+          while (-not (Test-Path -LiteralPath $marker) -and (Get-Date) -lt $deadline) {
+            Start-Sleep -Milliseconds 250
+          }
+          if (-not (Test-Path -LiteralPath $marker) -or (Get-Content -LiteralPath $marker -Raw) -ne "hello-smoke") {
             throw "Frozen launcher smoke marker was not written correctly"
           }
 
