@@ -65,8 +65,11 @@
             <!-- Populated by JavaScript -->
           </div>
           {% if live_data_mode %}
-          <a id="eng-view-btn" class="settings-button" href="/eng-view" data-bs-toggle="tooltip" data-bs-title="Switch to race engineer view">
+          <a id="eng-view-btn" class="settings-button" href="/eng-view" data-bs-toggle="tooltip" data-bs-title="Switch to classic race engineer view">
               <i class="bi bi-wrench-adjustable"></i>
+          </a>
+          <a class="settings-button" href="/dual-engineer" data-bs-toggle="tooltip" data-bs-title="Switch to Dual Engineer pit wall">
+              <i class="bi bi-people-fill"></i>
           </a>
           {% endif %}
           <button id="race-stats-btn" class="settings-button" data-bs-toggle="tooltip" data-bs-title="Show Race Stats">

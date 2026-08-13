@@ -32,6 +32,7 @@ from apps.backend.state_mgmt_layer.intf import (PeriodicUpdateData,
                                                 StreamOverlayData)
 from apps.backend.telemetry_layer import F1TelemetryHandler
 from lib.config import PngSettings
+from lib.dual_engineer.service import DualEngineerService
 from lib.inter_task_communicator import AsyncInterTaskCommunicator
 from lib.ipc import IpcDealerAsync, IpcPublisherAsync, PngAppId
 from lib.web_server import ClientType
@@ -72,7 +73,8 @@ def initUiIntfLayer(
     ver_str: str,
     run_ipc_server: bool,
     shutdown_event: asyncio.Event,
-    telemetry_handler: F1TelemetryHandler) -> Tuple[TelemetryWebServer, IpcPublisherAsync, IpcDealerAsync]:
+    telemetry_handler: F1TelemetryHandler,
+    dual_engineer_service: DualEngineerService) -> Tuple[TelemetryWebServer, IpcPublisherAsync, IpcDealerAsync]:
     """Initialize the UI interface layer and return then server obj for proper cleanup
 
     Args:
@@ -97,6 +99,7 @@ def initUiIntfLayer(
         ver_str=ver_str,
         logger=logger,
         session_state=session_state,
+        dual_engineer_service=dual_engineer_service,
         debug_mode=debug_mode,
     )
     ipc_pub = IpcPublisherAsync(logger=logger, port=settings.Network.broker_xsub_port)

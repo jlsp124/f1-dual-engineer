@@ -35,6 +35,7 @@ from apps.backend.state_mgmt_layer.intf import ManualSaveRsp
 from lib.button_debouncer import ButtonDebouncer
 from lib.config import CaptureSettings, OverlayId, PngSettings
 from lib.event_counter import EventCounter
+from lib.dual_engineer.service import DualEngineerService
 from lib.f1_types import (F1PacketType, PacketCarDamageData,
                           PacketCarSetupData, PacketCarStatusData,
                           PacketCarTelemetry2Data, PacketCarTelemetryData,
@@ -108,7 +109,8 @@ def setupTelemetryTask(
         session_state: SessionState,
         logger: PngLogger,
         ver_str: str,
-        tasks: List[asyncio.Task]) -> "F1TelemetryHandler":
+        tasks: List[asyncio.Task],
+        dual_engineer_service: DualEngineerService) -> "F1TelemetryHandler":
     """Entry point to start the F1 telemetry server.
 
     Args:
@@ -129,6 +131,7 @@ def setupTelemetryTask(
         session_state=session_state,
         replay_server=replay_server,
         ver_str=ver_str,
+        dual_engineer_service=dual_engineer_service,
     )
     tasks.append(telemetry_server.getTask())
     tasks.append(asyncio.create_task(telemetry_server.getWatchdogTask(), name="Watchdog Timer Task"))
@@ -151,7 +154,8 @@ class F1TelemetryHandler:
         logger: PngLogger,
         session_state: SessionState,
         replay_server: bool = False,
-        ver_str: str = "dev") -> None:
+        ver_str: str = "dev",
+        dual_engineer_service: Optional[DualEngineerService] = None) -> None:
         """
         Initialize F1TelemetryHandler.
 
@@ -177,6 +181,7 @@ class F1TelemetryHandler:
         )
         self.m_logger: PngLogger = logger
         self.m_session_state_ref: SessionState = session_state
+        self.m_dual_engineer_service = dual_engineer_service
 
         self.m_last_session_uid: Optional[int] = None
         self.m_data_cleared_this_session: bool = False
@@ -328,7 +333,7 @@ class F1TelemetryHandler:
         """
 
         @self.m_manager.on_raw_packet()
-        async def handleRawPacket(packet: List[bytes]) -> None:
+        async def handleRawPacket(packet: bytes) -> None:
             """
             Handle raw telemetry packet.
             Parameters:
@@ -336,6 +341,8 @@ class F1TelemetryHandler:
             """
             self.m_wdt.kick()
             self.m_session_state_ref.m_pkt_count += 1
+            if self.m_dual_engineer_service:
+                self.m_dual_engineer_service.on_raw_packet(packet)
             if self.m_should_forward:
                 await AsyncInterTaskCommunicator().send("packet-forward", packet)
 
@@ -358,6 +365,8 @@ class F1TelemetryHandler:
                 self.m_logger.info("Session UID changed. clearing data structures. UID %d",
                                    packet.m_header.m_sessionUID)
                 self.clearAllDataStructures("Session UID changed")
+            if self.m_dual_engineer_service:
+                self.m_dual_engineer_service.on_session_update(packet)
 
         @self.m_manager.on_packet(F1PacketType.LAP_DATA)
         async def processLapDataUpdate(packet: PacketLapData) -> None:
@@ -408,6 +417,8 @@ class F1TelemetryHandler:
 
             self._kick_periodic_packet_timer()
             self.m_session_state_ref.processParticipantsUpdate(packet)
+            if self.m_dual_engineer_service:
+                self.m_dual_engineer_service.on_participants_update()
 
         @self.m_manager.on_packet(F1PacketType.CAR_TELEMETRY)
         async def processCarTelemetryUpdate(packet: PacketCarTelemetryData) -> None:
@@ -454,6 +465,11 @@ class F1TelemetryHandler:
             self.m_logger.info('Received Final Classification Packet. UID = %d', packet.m_header.m_sessionUID)
             final_json = self.m_session_state_ref.processFinalClassificationUpdate(packet)
             self.m_final_classification_processed = True
+
+            if self.m_dual_engineer_service:
+                await self.m_dual_engineer_service.on_final_classification(
+                    packet.m_header.m_sessionUID, final_json
+                )
 
             # Perform the auto save stuff only if configured
             if self._shouldSaveData():

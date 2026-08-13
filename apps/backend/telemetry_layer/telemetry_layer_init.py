@@ -28,6 +28,7 @@ from typing import List
 
 from apps.backend.state_mgmt_layer import SessionState
 from lib.config import PngSettings
+from lib.dual_engineer.service import DualEngineerService
 from lib.error_status import PngTelemetryPortInUseError, is_port_in_use_error
 
 from .telemetry_forwarder import setupForwarder
@@ -42,7 +43,8 @@ def initTelemetryLayer(
         ver_str: str,
         shutdown_event: asyncio.Event,
         session_state: SessionState,
-        tasks: List[asyncio.Task]) -> F1TelemetryHandler:
+        tasks: List[asyncio.Task],
+        dual_engineer_service: DualEngineerService) -> F1TelemetryHandler:
     """Initialize the telemetry layer
 
     Args:
@@ -65,7 +67,8 @@ def initTelemetryLayer(
             session_state=session_state,
             logger=logger,
             ver_str=ver_str,
-            tasks=tasks
+            tasks=tasks,
+            dual_engineer_service=dual_engineer_service,
         )
     except OSError as e:
         logger.error("setupTelemetryTask failed with error %s", e)

@@ -307,6 +307,7 @@ class SessionState:
         'm_pkt_count',
         'm_driver_data',
         'm_player_index',
+        'm_secondary_player_index',
         'm_fastest_index',
         'm_num_active_cars',
         'm_num_dnf_cars',
@@ -354,6 +355,7 @@ class SessionState:
         self.m_pkt_count: int = 0
         self.m_driver_data: List[Optional[DataPerDriver]] = [None] * self.MAX_DRIVERS
         self.m_player_index: Optional[int] = None
+        self.m_secondary_player_index: Optional[int] = None
         self.m_fastest_index: Optional[int] = None
         self.m_num_active_cars: Optional[int] = None
         self.m_num_dnf_cars: Optional[int] = None
@@ -400,6 +402,7 @@ class SessionState:
         """
         self.m_driver_data = [None] * self.MAX_DRIVERS
         self.m_player_index = None
+        self.m_secondary_player_index = None
         self.m_fastest_index = None
         self.m_num_active_cars = None
         self.m_num_dnf_cars = None
@@ -653,6 +656,11 @@ class SessionState:
         """
 
         self.m_player_index = packet.m_header.m_playerCarIndex if packet.m_header.m_playerCarIndex != 255 else None
+        self.m_secondary_player_index = (
+            packet.m_header.m_secondaryPlayerCarIndex
+            if packet.m_header.m_secondaryPlayerCarIndex != 255
+            else None
+        )
         for index, participant in enumerate(packet.m_participants):
             obj_to_be_updated = self._getObjectByIndex(index, reason='Participants update')
             obj_to_be_updated.m_driver_info.name = participant.name

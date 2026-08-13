@@ -106,6 +106,10 @@ class PeriodicUpdateData(BaseAPI):
                                                           if self.m_session_info.m_packet_session else None, 0),
             "player-pit-window" : self._getValueOrDefaultValue(self.m_driver_list_rsp.m_next_pit_stop_window, None),
             "spectator-car-index" : self._getValueOrDefaultValue(self.m_session_info.m_spectator_car_index, None),
+            "player-car-index" : self._getValueOrDefaultValue(
+                self.m_driver_list_rsp.m_session_state.m_player_index, None),
+            "secondary-player-car-index" : self._getValueOrDefaultValue(
+                self.m_driver_list_rsp.m_session_state.m_secondary_player_index, None),
             "wdt-status" : self.m_wdt_status,
             "in-menu" : self.m_in_menu,
         }

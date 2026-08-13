@@ -25,7 +25,8 @@
 import logging
 import webbrowser
 from http import HTTPStatus
-from typing import Tuple
+from typing import Any, Dict, Optional, Tuple
+from urllib.parse import urlsplit
 
 from apps.backend.state_mgmt_layer import SessionState
 from apps.backend.state_mgmt_layer.intf import (PeriodicUpdateData,
@@ -33,6 +34,7 @@ from apps.backend.state_mgmt_layer.intf import (PeriodicUpdateData,
                                                 StreamOverlayData)
 from lib.child_proc_mgmt import notify_parent_init_complete
 from lib.config import PngSettings
+from lib.dual_engineer.service import DualEngineerService
 from lib.web_server import BaseWebServer, ClientType
 
 from .request_handlers import RequestError, handleDriverInfoRequest
@@ -63,6 +65,7 @@ class TelemetryWebServer(BaseWebServer):
                  ver_str: str,
                  logger: logging.Logger,
                  session_state: SessionState,
+                 dual_engineer_service: Optional[DualEngineerService] = None,
                  debug_mode: bool = False):
         """
         Initialize the TelemetryWebServer.
@@ -86,11 +89,12 @@ class TelemetryWebServer(BaseWebServer):
             cert_path=settings.HTTPS.cert_path,
             key_path=settings.HTTPS.key_path,
             debug_mode=debug_mode)
-        self.define_routes()
-        self.register_post_start_callback(self._post_start)
+        self.m_dual_engineer_service = dual_engineer_service
         self.m_show_start_sample_data = settings.StreamOverlay.show_sample_data_at_start
         self.m_session_state: SessionState = session_state
         self.m_disable_browser_autoload = settings.Display.disable_browser_autoload
+        self.define_routes()
+        self.register_post_start_callback(self._post_start)
 
     def define_routes(self) -> None:
         """
@@ -111,11 +115,16 @@ class TelemetryWebServer(BaseWebServer):
         @self.http_route('/')
         async def index() -> str:
             """
-            Render the main index page.
+            Render the primary dual-driver pit wall.
 
             Returns:
                 str: Rendered HTML content for the index page.
             """
+            return await self.render_template('dual-engineer.html', version=self.m_ver_str)
+
+        @self.http_route('/driver-view')
+        async def driverView() -> str:
+            """Render the preserved upstream single-driver dashboard."""
             return await self.render_template('driver-view.html', live_data_mode=True, version=self.m_ver_str)
 
         @self.http_route('/eng-view')
@@ -127,6 +136,11 @@ class TelemetryWebServer(BaseWebServer):
                 str: Rendered HTML content for the stream overlay page.
             """
             return await self.render_template('eng-view.html', live_data_mode=True, version=self.m_ver_str)
+
+        @self.http_route('/dual-engineer')
+        async def dualEngineerView() -> str:
+            """Render the dual-driver pit wall and analysis workspace."""
+            return await self.render_template('dual-engineer.html', version=self.m_ver_str)
 
         @self.http_route('/eng-view/trackmap')
         async def engineerViewTrackmap() -> str:
@@ -203,6 +217,136 @@ class TelemetryWebServer(BaseWebServer):
             """
             return StreamOverlayData(self.m_session_state, export_hud_data=True, export_pu_data=True) \
                         .toJSON(self.m_show_start_sample_data), HTTPStatus.OK
+
+        @self.http_route('/api/dual-engineer/state')
+        async def dualEngineerState() -> Tuple[Dict[str, Any], int]:
+            if not self.m_dual_engineer_service:
+                return {"error": "Dual Engineer is disabled"}, HTTPStatus.SERVICE_UNAVAILABLE
+            data = self.m_dual_engineer_service.state_json()
+            data["telemetry"] = PeriodicUpdateData(self.m_session_state, send_position_data=True).toJSON()
+            return data, HTTPStatus.OK
+
+        @self.http_route('/api/dual-engineer/selection', methods=['POST'])
+        async def dualEngineerSelection() -> Tuple[Dict[str, Any], int]:
+            if not self.m_dual_engineer_service:
+                return {"error": "Dual Engineer is disabled"}, HTTPStatus.SERVICE_UNAVAILABLE
+            if not self._same_origin_request():
+                return {"error": "Cross-origin request rejected"}, HTTPStatus.FORBIDDEN
+            try:
+                payload = await self._bounded_json_request()
+                state = self.m_dual_engineer_service.set_selection(
+                    int(payload["driver_a_index"]), int(payload["driver_b_index"])
+                )
+            except (KeyError, TypeError, ValueError) as error:
+                return {"error": str(error)}, HTTPStatus.BAD_REQUEST
+            return state, HTTPStatus.OK
+
+        @self.http_route('/api/dual-engineer/sessions')
+        async def dualEngineerSessions() -> Tuple[Dict[str, Any], int]:
+            if not self.m_dual_engineer_service:
+                return {"error": "Dual Engineer is disabled"}, HTTPStatus.SERVICE_UNAVAILABLE
+            return {"sessions": self.m_dual_engineer_service.sessions_json()}, HTTPStatus.OK
+
+        @self.http_route('/api/dual-engineer/sessions/<session_uid>')
+        async def dualEngineerSession(session_uid: str) -> Tuple[Dict[str, Any], int]:
+            if not self.m_dual_engineer_service:
+                return {"error": "Dual Engineer is disabled"}, HTTPStatus.SERVICE_UNAVAILABLE
+            try:
+                return self.m_dual_engineer_service.session_detail_json(session_uid), HTTPStatus.OK
+            except (FileNotFoundError, ValueError) as error:
+                return {"error": str(error)}, HTTPStatus.NOT_FOUND
+
+        @self.http_route('/api/dual-engineer/sessions/<session_uid>/export')
+        async def dualEngineerExport(session_uid: str) -> Any:
+            if not self.m_dual_engineer_service:
+                return {"error": "Dual Engineer is disabled"}, HTTPStatus.SERVICE_UNAVAILABLE
+            try:
+                archive = self.m_dual_engineer_service.export_session_zip(session_uid)
+            except (FileNotFoundError, OSError, ValueError) as error:
+                return {"error": str(error)}, HTTPStatus.NOT_FOUND
+            return await self.send_from_directory(archive.parent, archive.name, as_attachment=True)
+
+        @self.http_route('/api/dual-engineer/sessions/<session_uid>/open', methods=['POST'])
+        async def dualEngineerOpenFolder(session_uid: str) -> Tuple[Dict[str, Any], int]:
+            if not self.m_dual_engineer_service:
+                return {"error": "Dual Engineer is disabled"}, HTTPStatus.SERVICE_UNAVAILABLE
+            if not self._same_origin_request() or not self._loopback_request():
+                return {"error": "Open Session Folder is limited to this computer"}, HTTPStatus.FORBIDDEN
+            try:
+                folder = self.m_dual_engineer_service.open_session_folder(session_uid)
+            except (FileNotFoundError, OSError, ValueError) as error:
+                return {"error": str(error)}, HTTPStatus.BAD_REQUEST
+            return {"opened": str(folder)}, HTTPStatus.OK
+
+        @self.http_route('/api/dual-engineer/careers')
+        async def dualEngineerCareers() -> Tuple[Dict[str, Any], int]:
+            if not self.m_dual_engineer_service:
+                return {"error": "Dual Engineer is disabled"}, HTTPStatus.SERVICE_UNAVAILABLE
+            return {"careers": self.m_dual_engineer_service.careers_json()}, HTTPStatus.OK
+
+        @self.http_route('/api/dual-engineer/careers', methods=['POST'])
+        async def dualEngineerCreateCareer() -> Tuple[Dict[str, Any], int]:
+            if not self.m_dual_engineer_service:
+                return {"error": "Dual Engineer is disabled"}, HTTPStatus.SERVICE_UNAVAILABLE
+            if not self._same_origin_request():
+                return {"error": "Cross-origin request rejected"}, HTTPStatus.FORBIDDEN
+            try:
+                return self.m_dual_engineer_service.create_career(
+                    await self._bounded_json_request()
+                ), HTTPStatus.CREATED
+            except (TypeError, ValueError) as error:
+                return {"error": str(error)}, HTTPStatus.BAD_REQUEST
+
+        @self.http_route('/api/dual-engineer/careers/<int:career_id>')
+        async def dualEngineerCareer(career_id: int) -> Tuple[Dict[str, Any], int]:
+            if not self.m_dual_engineer_service:
+                return {"error": "Dual Engineer is disabled"}, HTTPStatus.SERVICE_UNAVAILABLE
+            try:
+                return self.m_dual_engineer_service.career_detail_json(career_id), HTTPStatus.OK
+            except KeyError as error:
+                return {"error": str(error)}, HTTPStatus.NOT_FOUND
+
+        @self.http_route('/api/dual-engineer/careers/<int:career_id>/import', methods=['POST'])
+        async def dualEngineerImportCareer(career_id: int) -> Tuple[Dict[str, Any], int]:
+            if not self.m_dual_engineer_service:
+                return {"error": "Dual Engineer is disabled"}, HTTPStatus.SERVICE_UNAVAILABLE
+            if not self._same_origin_request():
+                return {"error": "Cross-origin request rejected"}, HTTPStatus.FORBIDDEN
+            try:
+                return self.m_dual_engineer_service.import_career_standings(
+                    career_id, await self._bounded_json_request()
+                ), HTTPStatus.OK
+            except (KeyError, TypeError, ValueError) as error:
+                return {"error": str(error)}, HTTPStatus.BAD_REQUEST
+
+        @self.http_route('/api/dual-engineer/careers/<int:career_id>/activate', methods=['POST'])
+        async def dualEngineerActivateCareer(career_id: int) -> Tuple[Dict[str, Any], int]:
+            if not self.m_dual_engineer_service:
+                return {"error": "Dual Engineer is disabled"}, HTTPStatus.SERVICE_UNAVAILABLE
+            if not self._same_origin_request():
+                return {"error": "Cross-origin request rejected"}, HTTPStatus.FORBIDDEN
+            try:
+                return self.m_dual_engineer_service.activate_career(career_id), HTTPStatus.OK
+            except KeyError as error:
+                return {"error": str(error)}, HTTPStatus.NOT_FOUND
+
+    async def _bounded_json_request(self) -> Dict[str, Any]:
+        """Read a small JSON object from a local/LAN dashboard request."""
+        if self.request.content_length and self.request.content_length > 256 * 1024:
+            raise ValueError("Request body is too large")
+        payload = await self.request.get_json(silent=True)
+        if not isinstance(payload, dict):
+            raise ValueError("Expected a JSON object")
+        return payload
+
+    def _same_origin_request(self) -> bool:
+        origin = self.request.headers.get("Origin")
+        if not origin:
+            return True
+        return urlsplit(origin).netloc.casefold() == self.request.host.casefold()
+
+    def _loopback_request(self) -> bool:
+        return self.request.remote_addr in {"127.0.0.1", "::1", "localhost", None}
 
     async def _post_start(self) -> None:
         """Function to be called after the server starts serving."""

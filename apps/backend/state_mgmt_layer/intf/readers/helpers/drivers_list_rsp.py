@@ -27,6 +27,7 @@ from typing import Any, Dict, List, Optional, Union
 from apps.backend.state_mgmt_layer.data_per_driver import DataPerDriver
 from apps.backend.state_mgmt_layer.session_state import SessionState
 from lib.f1_types import CarStatusData, F1Utils, VisualTyreCompound, LapHistoryData
+from lib.dual_engineer.snapshot import live_telemetry_json
 
 from ...base import BaseAPI
 
@@ -375,6 +376,7 @@ class DriversListRsp(BaseAPI):
             "fuel-info": driver_data.getFuelStatsJSON(),
             "pit-info": driver_data.getPitInfoJSON(),
             "2026-regs-info": driver_data.get2026RegsInfoJSON(),
+            "live-telemetry": live_telemetry_json(self.m_session_state, index, driver_data),
         }
         if self.m_send_position_data:
             motion = driver_data.m_packet_copies.m_packet_motion
@@ -401,6 +403,7 @@ class DriversListRsp(BaseAPI):
             "team": self._getValueOrDefaultValue(driver_data.m_driver_info.team),
             "is-fastest": self._getValueOrDefaultValue(index == self.m_session_state.m_fastest_index),
             "is-player": self._getValueOrDefaultValue(driver_data.m_driver_info.is_player),
+            "is-secondary-player": index == self.m_session_state.m_secondary_player_index,
             "dnf-status": self._getValueOrDefaultValue(driver_data.m_driver_info.m_dnf_status_code),
             "index": self._getValueOrDefaultValue(index),
             "telemetry-setting": telemetry_restrictions, # Already NULL checked

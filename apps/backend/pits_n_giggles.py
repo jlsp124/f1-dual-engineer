@@ -41,6 +41,7 @@ from apps.backend.telemetry_layer import initTelemetryLayer
 from lib.child_proc_mgmt import report_pid_from_child
 from lib.config import load_config_from_json
 from lib.error_status import PngError
+from lib.dual_engineer.service import DualEngineerService
 from lib.inter_task_communicator import AsyncInterTaskCommunicator
 from lib.ipc import IpcDealerAsync, IpcPublisherAsync
 from lib.logger import get_logger
@@ -83,6 +84,14 @@ class PngRunner:
             shutdown_event=self.m_shutdown_event
         )
 
+        self.m_dual_engineer_service = DualEngineerService(
+            self.m_session_state,
+            self.m_config.Engineer,
+            self.m_shutdown_event,
+            logger=self.m_logger,
+        )
+        self.m_tasks.extend(self.m_dual_engineer_service.start())
+
         self.m_telemetry_handler = initTelemetryLayer(
             settings=self.m_config,
             replay_server=replay_server,
@@ -90,7 +99,8 @@ class PngRunner:
             ver_str=self.m_version,
             shutdown_event=self.m_shutdown_event,
             session_state=self.m_session_state,
-            tasks=self.m_tasks
+            tasks=self.m_tasks,
+            dual_engineer_service=self.m_dual_engineer_service,
         )
         self.m_web_server, self.m_ipc_pub, self.m_ipc_dealer = self._setupUiIntfLayer(
             run_ipc_server=run_ipc_server,
@@ -146,6 +156,7 @@ class PngRunner:
             run_ipc_server=run_ipc_server,
             shutdown_event=self.m_shutdown_event,
             telemetry_handler=self.m_telemetry_handler,
+            dual_engineer_service=self.m_dual_engineer_service,
         )
 
     def _getLocalIpAddresses(self) -> Set[str]:
@@ -189,6 +200,7 @@ class PngRunner:
         # Explicitly stop the tasks
         await self.m_web_server.stop()
         await self.m_telemetry_handler.stop()
+        await self.m_dual_engineer_service.stop()
         await self.m_ipc_pub.close()
         await self.m_ipc_dealer.close()
         await asyncio.sleep(1)

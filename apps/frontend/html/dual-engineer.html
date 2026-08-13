@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#090b0e">
+  <title>F1 Dual Engineer · Pit Wall</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/dualEngineer.css', build='010') }}">
+  <script defer src="{{ url_for('static', filename='js/dualEngineerDemoData.js', build='010') }}"></script>
+  <script defer src="{{ url_for('static', filename='js/dualEngineer.js', build='010') }}"></script>
+</head>
+<body>
+  <a class="skip-link" href="#workspace">Skip to pit wall</a>
+  <header class="app-header">
+    <div class="brand" aria-label="F1 Dual Engineer">
+      <span class="brand-mark" aria-hidden="true"><i></i><i></i></span>
+      <span><strong>DUAL</strong> ENGINEER</span>
+      <span class="version">v{{ version }}</span>
+    </div>
+    <nav class="primary-nav" aria-label="Application sections">
+      <button class="nav-item is-active" data-view="pitwall">Live Pit Wall</button>
+      <button class="nav-item" data-view="analysis">Analysis</button>
+      <button class="nav-item" data-view="sessions">Sessions</button>
+      <button class="nav-item" data-view="career">Career</button>
+      <a class="nav-item nav-link" href="/eng-view">Classic Engineer</a>
+      <a class="nav-item nav-link" href="/driver-view">Single Driver</a>
+    </nav>
+    <div class="connection-status">
+      <span id="demoBadge" class="demo-badge" hidden>DEMO DATA</span>
+      <span class="status-dot" id="connectionDot"></span>
+      <span><b id="connectionLabel">WAITING FOR UDP</b><small id="packetLabel">Port 20777</small></span>
+      <button class="icon-button" id="demoToggle" title="Toggle representative demo telemetry" aria-label="Toggle demo mode">D</button>
+    </div>
+  </header>
+
+  <section class="session-strip" aria-label="Current session">
+    <div class="session-title"><span id="sessionType">NO SESSION</span><strong id="circuitName">Waiting for F1 telemetry</strong></div>
+    <div class="session-metric"><small>SESSION</small><b id="sessionClock">--:--</b></div>
+    <div class="session-metric"><small>LAP</small><b id="sessionLap">— / —</b></div>
+    <div class="session-metric"><small>TRACK / AIR</small><b id="temperatures">— / —</b></div>
+    <div class="session-metric"><small>RACE CONTROL</small><b id="raceControl">CLEAR</b></div>
+    <div class="recording-pill"><span></span><b id="recordingLabel">ARMED</b><small id="recordingDetail">Automatic capture</small></div>
+  </section>
+
+  <main id="workspace">
+    <section class="view is-active" id="view-pitwall" aria-label="Live pit wall">
+      <div class="selection-bar panel">
+        <label><span>DRIVER A</span><select id="driverASelect" aria-label="Select Driver A"></select></label>
+        <div class="versus">A <i></i> B</div>
+        <label><span>DRIVER B</span><select id="driverBSelect" aria-label="Select Driver B"></select></label>
+        <p id="privacyNotice">Select two live participants. Restricted remote telemetry stays unavailable.</p>
+        <button class="button button-primary" id="pinDrivers">PIN DRIVERS</button>
+      </div>
+
+      <div class="driver-grid">
+        <article class="driver-card driver-a" id="driverACard">
+          <header>
+            <span class="driver-token">A</span>
+            <div><small>PRIMARY DRIVER</small><h2 id="driverAName">Driver A</h2><p id="driverATeam">Awaiting participant</p></div>
+            <div class="position"><small>POSITION</small><strong id="driverAPosition">—</strong></div>
+          </header>
+          <div class="unavailable-banner" id="driverAUnavailable" hidden>DETAILED TELEMETRY UNAVAILABLE · SET “YOUR TELEMETRY” TO PUBLIC</div>
+          <div class="driver-core">
+            <div class="metric hero"><small>GAP TO LEADER</small><b id="driverAGap">—</b><span id="driverAInterval">Ahead —</span></div>
+            <div class="metric"><small>CURRENT LAP</small><b id="driverACurrent">—</b><span id="driverADelta">Delta —</span></div>
+            <div class="metric"><small>LAST / BEST</small><b id="driverALast">—</b><span id="driverABest">Best —</span></div>
+            <div class="sector-row" id="driverASectors"><span>S1 <b>—</b></span><span>S2 <b>—</b></span><span>S3 <b>—</b></span></div>
+          </div>
+          <div class="telemetry-rack">
+            <div><small>SPEED</small><b id="driverASpeed">—</b><em>km/h</em></div>
+            <div><small>GEAR</small><b id="driverAGear">—</b></div>
+            <div class="input-meter"><small>THROTTLE</small><b id="driverAThrottle">—</b><i><span></span></i></div>
+            <div class="input-meter brake"><small>BRAKE</small><b id="driverABrake">—</b><i><span></span></i></div>
+          </div>
+          <div class="systems-grid">
+            <div><small>TYRE</small><b id="driverATyre">—</b><span id="driverATyreAge">Age —</span></div>
+            <div><small>WEAR AVG</small><b id="driverAWear">—</b><span id="driverATemps">Temps —</span></div>
+            <div><small>FUEL</small><b id="driverAFuel">—</b><span id="driverAFuelDelta">Delta —</span></div>
+            <div><small>ERS</small><b id="driverAErs">—</b><span id="driverAErsMode">Mode —</span></div>
+            <div><small>STATUS</small><b id="driverAStatus">RUNNING</b><span id="driverADrs">DRS —</span></div>
+            <div><small>DAMAGE</small><b id="driverADamage">—</b><span id="driverAPenalties">No penalties</span></div>
+          </div>
+        </article>
+
+        <article class="driver-card driver-b" id="driverBCard">
+          <header>
+            <span class="driver-token">B</span>
+            <div><small>PRIMARY DRIVER</small><h2 id="driverBName">Driver B</h2><p id="driverBTeam">Awaiting participant</p></div>
+            <div class="position"><small>POSITION</small><strong id="driverBPosition">—</strong></div>
+          </header>
+          <div class="unavailable-banner" id="driverBUnavailable" hidden>DETAILED TELEMETRY UNAVAILABLE · SET “YOUR TELEMETRY” TO PUBLIC</div>
+          <div class="driver-core">
+            <div class="metric hero"><small>GAP TO LEADER</small><b id="driverBGap">—</b><span id="driverBInterval">Ahead —</span></div>
+            <div class="metric"><small>CURRENT LAP</small><b id="driverBCurrent">—</b><span id="driverBDelta">Delta —</span></div>
+            <div class="metric"><small>LAST / BEST</small><b id="driverBLast">—</b><span id="driverBBest">Best —</span></div>
+            <div class="sector-row" id="driverBSectors"><span>S1 <b>—</b></span><span>S2 <b>—</b></span><span>S3 <b>—</b></span></div>
+          </div>
+          <div class="telemetry-rack">
+            <div><small>SPEED</small><b id="driverBSpeed">—</b><em>km/h</em></div>
+            <div><small>GEAR</small><b id="driverBGear">—</b></div>
+            <div class="input-meter"><small>THROTTLE</small><b id="driverBThrottle">—</b><i><span></span></i></div>
+            <div class="input-meter brake"><small>BRAKE</small><b id="driverBBrake">—</b><i><span></span></i></div>
+          </div>
+          <div class="systems-grid">
+            <div><small>TYRE</small><b id="driverBTyre">—</b><span id="driverBTyreAge">Age —</span></div>
+            <div><small>WEAR AVG</small><b id="driverBWear">—</b><span id="driverBTemps">Temps —</span></div>
+            <div><small>FUEL</small><b id="driverBFuel">—</b><span id="driverBFuelDelta">Delta —</span></div>
+            <div><small>ERS</small><b id="driverBErs">—</b><span id="driverBErsMode">Mode —</span></div>
+            <div><small>STATUS</small><b id="driverBStatus">RUNNING</b><span id="driverBDrs">DRS —</span></div>
+            <div><small>DAMAGE</small><b id="driverBDamage">—</b><span id="driverBPenalties">No penalties</span></div>
+          </div>
+        </article>
+      </div>
+
+      <div class="pitwall-grid">
+        <section class="panel timing-panel">
+          <header class="panel-header"><div><small>LIVE CLASSIFICATION</small><h3>TIMING TOWER</h3></div><span class="legend"><i class="a"></i>A <i class="b"></i>B</span></header>
+          <div class="table-scroll"><table class="timing-table"><thead><tr><th>POS</th><th>DRIVER</th><th>INT</th><th>GAP</th><th>LAST</th><th>BEST</th><th>S1</th><th>S2</th><th>S3</th><th>TYRE</th><th>AGE</th><th>ERS</th><th>STATE</th></tr></thead><tbody id="timingBody"></tbody></table></div>
+        </section>
+
+        <section class="panel map-panel">
+          <header class="panel-header"><div><small>FIELD POSITION</small><h3 id="mapTitle">TRACK MAP</h3></div><span class="live-chip">LIVE</span></header>
+          <canvas id="trackMap" width="800" height="480" aria-label="Live track map"></canvas>
+          <div class="map-key"><span><i class="a"></i>Driver A</span><span><i class="b"></i>Driver B</span><span><i></i>Field</span><span><i class="pit"></i>Pit</span></div>
+        </section>
+
+        <section class="panel comparison-panel">
+          <header class="panel-header"><div><small>LAP DISTANCE NORMALIZED</small><h3>LIVE COMPARISON</h3></div><b class="delta-callout" id="liveDelta">—</b></header>
+          <div class="comparison-tabs" role="tablist"><button class="is-active" data-trace="speed">SPEED</button><button data-trace="inputs">INPUTS</button><button data-trace="gforce">G-FORCE</button><button data-trace="path">RACING PATH</button></div>
+          <canvas id="traceChart" width="1100" height="330" aria-label="Driver comparison trace"></canvas>
+          <div class="trace-legend"><span><i class="a"></i><b id="traceAName">Driver A</b></span><span><i class="b"></i><b id="traceBName">Driver B</b></span><small>Corresponding positions compared by lap distance</small></div>
+        </section>
+
+        <aside class="panel feed-panel">
+          <header class="panel-header"><div><small>PRIORITIZED · COALESCED</small><h3>ENGINEER FEED</h3></div><span id="feedCount">0</span></header>
+          <ol id="engineerFeed" aria-live="polite"><li class="feed-empty">Actionable messages appear as telemetry arrives.</li></ol>
+        </aside>
+      </div>
+    </section>
+
+    <section class="view" id="view-analysis" aria-label="Driver analysis">
+      <div class="analysis-head"><div><small>POST-SESSION · EXPLAINABLE</small><h1>Driver Comparison</h1><p id="analysisState">Clean representative laps only. Every diagnosis includes evidence and confidence.</p></div><div class="reference-badge"><small>REFERENCE QUALITY</small><b id="referenceQuality">HIGH</b><span id="referenceDetails">Same compound · clean air · tyre age +1</span></div></div>
+      <div class="analysis-kpis">
+        <div class="panel"><small>REPRESENTATIVE GAP</small><b id="analysisGap">+0.842s</b><span id="analysisGapLabel">Driver A to Driver B</span></div>
+        <div class="panel"><small>PERSONAL BEST</small><b id="analysisPb">1:22.911</b><span id="analysisPbLabel">Clean lap 12</span></div>
+        <div class="panel purple"><small>THEORETICAL</small><b id="analysisTheoretical">1:21.804</b><span id="analysisTheoreticalLabel">Untapped 1.107s</span></div>
+        <div class="panel"><small>CONSISTENCY</small><b id="analysisConsistency">±0.184s</b><span id="analysisConsistencyLabel">Best 3 clean laps</span></div>
+      </div>
+      <div class="analysis-layout">
+        <section class="panel opportunities"><header class="panel-header"><div><small>ENTRY / MID / EXIT</small><h3>LARGEST OPPORTUNITIES</h3></div></header><div class="phase-bars"><span>ENTRY <i id="entryBar" style="--value:59%"></i><b id="entryLoss">+0.493</b></span><span>MID-CORNER <i id="midBar" style="--value:27%"></i><b id="midLoss">+0.224</b></span><span>EXIT <i id="exitBar" style="--value:15%"></i><b id="exitLoss">+0.125</b></span></div><ol id="opportunityList"><li><b>T6–7</b><span>Over-slowing</span><em>+0.218</em></li><li><b>T12</b><span>Traction / exit</span><em>+0.173</em></li><li><b>T5</b><span>Early braking</span><em>+0.142</em></li><li><b>T14</b><span>Line difference</span><em>+0.094</em></li></ol></section>
+        <section class="panel diagnosis"><header class="panel-header"><div><small>SELECTED SEGMENT</small><h3 id="diagnosisTitle">T5 · +0.142s</h3></div><span class="confidence high" id="diagnosisConfidence">HIGH CONFIDENCE</span></header><div class="diagnosis-grid"><div><small>PRIMARY LOSS</small><b id="diagnosisPhase">ENTRY</b></div><div><small>BRAKE POINT</small><b id="diagnosisBrakePoint">4m earlier</b></div><div><small>BRAKE DURATION</small><b id="diagnosisBrakeDuration">+21m</b></div><div><small>MINIMUM SPEED</small><b class="loss" id="diagnosisMinSpeed">−11 km/h</b></div><div><small>FULL THROTTLE</small><b id="diagnosisThrottle">Approximately equal</b></div><div><small>DIAGNOSIS</small><b id="diagnosisName">Over-slowing</b></div></div><p class="evidence" id="diagnosisEvidence"><b>Evidence:</b> earlier brake onset, longer brake application, and lower minimum speed correlate with most of the measured entry loss. This is not a claim of causal certainty.</p></section>
+      </div>
+    </section>
+
+    <section class="view" id="view-sessions" aria-label="Recorded sessions">
+      <div class="page-heading"><div><small>LOCAL · AUTOMATIC</small><h1>Recorded Sessions</h1><p>Raw replay-compatible packets, interoperable summaries, and selected-driver analysis.</p></div><button class="button" id="refreshSessions">REFRESH</button></div>
+      <div class="session-list panel" id="sessionList"><p class="empty-state">No finalized sessions yet. Recording starts automatically when F1 telemetry arrives.</p></div>
+    </section>
+
+    <section class="view" id="view-career" aria-label="Career companion">
+      <div class="page-heading"><div><small>OPTIONAL · LOCAL SQLITE</small><h1>Career Companion</h1><p>Build a season from observed classifications or import current standings manually.</p></div><button class="button button-primary" id="newCareer">NEW CAREER</button></div>
+      <p class="empty-state panel" id="careerEmpty" hidden>No career exists yet. Create one or import current standings to begin.</p>
+      <div class="career-grid" id="careerGrid">
+        <section class="panel championship"><header class="panel-header"><div><small id="careerProjectionLabel">IF RACE ENDS NOW</small><h3>DRIVERS' CHAMPIONSHIP</h3></div><span class="round-badge" id="careerRound">ROUND 8 / 24</span></header><ol id="driverStandings"><li><b>1</b><strong>JOV</strong><span>Apex GP</span><em>142</em></li><li class="driver-b-row"><b>2</b><strong>JAX</strong><span>Apex GP</span><em>139 <small>−3</small></em></li><li><b>3</b><strong>LEC</strong><span>Ferrari</span><em>118</em></li><li><b>4</b><strong>NOR</strong><span>McLaren</span><em>104</em></li></ol></section>
+        <section class="panel team-war"><header class="panel-header"><div><small>SEASON MATCHUP</small><h3>TEAM WAR</h3></div></header><div class="war-score"><div><span>A</span><b id="warAName">JOV</b><strong id="warAScore">5</strong></div><i>RACE H2H</i><div><span>B</span><b id="warBName">JAX</b><strong id="warBScore">3</strong></div></div><div class="war-stats"><span><small>QUALIFYING</small><b id="warQualifying">4 — 4</b></span><span><small>WINS</small><b id="warWins">3 — 2</b></span><span><small>PODIUMS</small><b id="warPodiums">6 — 6</b></span><span><small>AVG PACE GAP</small><b>Unavailable</b></span><span><small>CONSISTENCY</small><b>Unavailable</b></span><span><small>RECENT FORM</small><b>Observed events</b></span></div></section>
+      </div>
+      <dialog id="careerDialog"><form method="dialog" id="careerForm"><header><small>CAREER SETUP</small><h2>Start or import a season</h2></header><label>Season name<input name="season_name" value="2026 Two-Player Career" maxlength="80" required></label><div class="form-row"><label>Driver A key<input name="driver_a_key" value="jov" maxlength="80" required></label><label>Driver B key<input name="driver_b_key" value="jax" maxlength="80" required></label></div><div class="form-row"><label>Driver A display name<input name="driver_a_name" value="JOV" maxlength="80" required></label><label>Driver B display name<input name="driver_b_name" value="JAX" maxlength="80" required></label></div><div class="form-row"><label>Driver A team<input name="driver_a_team" value="Apex GP" maxlength="80"></label><label>Driver B team<input name="driver_b_team" value="Apex GP" maxlength="80"></label></div><div class="form-row"><label>Driver A starting points<input name="driver_a_points" type="number" min="0" max="9999" value="0"></label><label>Driver B starting points<input name="driver_b_points" type="number" min="0" max="9999" value="0"></label></div><div class="form-row"><label>Team A starting points<input name="team_a_points" type="number" min="0" max="9999" value="0"></label><label>Team B starting points<input name="team_b_points" type="number" min="0" max="9999" value="0"></label></div><label>Completed rounds before the next recorded event<input name="current_round" type="number" min="0" max="40" value="0"></label><p>These values seed F1 Dual Engineer's local database only. No EA save file is read or modified.</p><footer><button class="button" value="cancel">CANCEL</button><button class="button button-primary" value="default" id="createCareer">CREATE &amp; IMPORT</button></footer></form></dialog>
+    </section>
+  </main>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+</body>
+</html>
