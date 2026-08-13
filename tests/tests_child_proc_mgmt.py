@@ -28,8 +28,7 @@ class TestPidReport(TestChildProcMgmt):
     def test_extract_pid_from_multiple_tags_in_line(self):
         """Test extracting PID when multiple PID tags are present in a line."""
         line = "<<PNG_LAUNCHER_CHILD_PID:12345>> Some log <<PNG_LAUNCHER_CHILD_PID:67890>> More info"
-        # Should return the first PID by default
-        self.assertEqual(extract_pid_from_line(line), 12345)
+        self.assertIsNone(extract_pid_from_line(line))
 
     def test_extract_pid_with_whitespace_variations_invalid(self):
         """Test PID extraction with various whitespace scenarios."""
@@ -44,7 +43,7 @@ class TestPidReport(TestChildProcMgmt):
     def test_extract_pid_with_zero_pid(self):
         """Test handling of zero as a PID."""
         line = "<<PNG_LAUNCHER_CHILD_PID:0>>"
-        self.assertEqual(extract_pid_from_line(line), 0)
+        self.assertIsNone(extract_pid_from_line(line))
 
     def test_extract_pid_with_large_pid(self):
         """Test handling of very large PIDs."""
@@ -109,15 +108,14 @@ class TestPidReport(TestChildProcMgmt):
             "log text(<<PNG_LAUNCHER_CHILD_PID:54321>>)more text"
         ]
         for line in test_cases:
-            self.assertEqual(extract_pid_from_line(line), 54321,
-                             f"Failed for line: {line}")
+            self.assertIsNone(extract_pid_from_line(line), f"Failed for line: {line}")
 
 class TestIsInitComplete(TestChildProcMgmt):
 
     def test_contains_init_complete(self):
         # Test case where the line contains _INIT_COMPLETE_STR
         line = "Some random text <<__PNG_SUBSYSTEM_INIT_COMPLETE__>> more text"
-        self.assertTrue(is_init_complete(line))
+        self.assertFalse(is_init_complete(line))
 
     def test_does_not_contain_init_complete(self):
         # Test case where the line does not contain _INIT_COMPLETE_STR
@@ -168,13 +166,17 @@ class TestIpcPortExtraction(TestChildProcMgmt):
 
     def test_valid_ipc_port_with_noise(self):
         line = "log info: starting... <<PNG_LAUNCHER_IPC_PORT:7777>> ready"
-        self.assertEqual(extract_ipc_port_from_line(line), 7777)
+        self.assertIsNone(extract_ipc_port_from_line(line))
 
     def test_multiple_tags_uses_first_match(self):
         line = "<<PNG_LAUNCHER_IPC_PORT:1111>> something <<PNG_LAUNCHER_IPC_PORT:2222>>"
-        self.assertEqual(extract_ipc_port_from_line(line), 1111)
+        self.assertIsNone(extract_ipc_port_from_line(line))
 
     def test_non_numeric_port(self):
         # Should return None because regex requires digits
         line = "<<PNG_LAUNCHER_IPC_PORT:abcd>>"
         self.assertIsNone(extract_ipc_port_from_line(line))
+
+    def test_out_of_range_ports(self):
+        self.assertIsNone(extract_ipc_port_from_line("<<PNG_LAUNCHER_IPC_PORT:0>>"))
+        self.assertIsNone(extract_ipc_port_from_line("<<PNG_LAUNCHER_IPC_PORT:65536>>"))

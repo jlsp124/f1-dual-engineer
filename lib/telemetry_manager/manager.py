@@ -27,6 +27,7 @@ import json
 import os
 from datetime import datetime
 from logging import Logger
+from pathlib import Path
 from typing import Awaitable, Callable, Dict, Optional
 
 from lib.event_counter import EventCounter
@@ -113,6 +114,10 @@ class AsyncF1TelemetryManager:
                 await self._processPacket(pkt_factory, raw_packet)
             except (UnsupportedPacketFormat, UnsupportedPacketType) as e:
                 self.m_logger.error(e, exc_info=True)
+            except Exception:  # pylint: disable=broad-exception-caught
+                # A UDP sender is untrusted. One malformed datagram must never
+                # terminate the long-running receive loop.
+                self.m_logger.exception("Dropped telemetry datagram after an unexpected processing error")
 
         try:
             await self.m_transport.run()
@@ -142,10 +147,6 @@ class AsyncF1TelemetryManager:
         """
 
         self.m_stats.track_packet("__RAW__", "__TOTAL__", len(raw_packet))
-        # First, perform the raw packet callback
-        if self.m_raw_packet_callback:
-            await self.m_raw_packet_callback(raw_packet)
-
         parsed_obj = pkt_factory.parse(raw_packet)
         if not parsed_obj:
             self.m_stats.track_packet(
@@ -153,6 +154,16 @@ class AsyncF1TelemetryManager:
                 pkt_factory.last_failure_reason or "N/A",
                 len(raw_packet))
             return
+
+        # Only retain/forward structurally valid packets. Callback failures are
+        # isolated to this datagram so recording cannot take down ingestion.
+        if self.m_raw_packet_callback:
+            try:
+                await self.m_raw_packet_callback(raw_packet)
+            except Exception:  # pylint: disable=broad-exception-caught
+                self.m_stats.track_packet("__EXCEPTION_RAW_CB__", "raw-callback", len(raw_packet))
+                self.m_logger.exception("Exception while handling a raw telemetry packet callback")
+                return
 
         # self.m_logger.silent(f"Packet meta: frameId={parsed_obj.m_header.m_frameIdentifier}, "
         #                      f"packetId={parsed_obj.m_header.m_packetId}, "
@@ -192,7 +203,6 @@ class AsyncF1TelemetryManager:
                 json.dumps(parsed_obj.m_header.toJSON(), indent=2),
                 packet_file,
             )
-            raise
 
     def _dumpPacketToFile(self, packet_obj: object, directory: str = "crash_packet_dumps") -> str:
         """Dump packet JSON to a timestamped file and return the file path.
@@ -206,6 +216,16 @@ class AsyncF1TelemetryManager:
 
         """
         os.makedirs(directory, exist_ok=True)
+
+        existing = sorted(
+            (
+                path for path in Path(directory).glob("*.json")
+                if path.is_file() and not path.is_symlink()
+            ),
+            key=lambda path: path.stat().st_mtime,
+        )
+        for stale in existing[:-15]:
+            stale.unlink(missing_ok=True)
 
         timestamp = datetime.now().strftime("%Y_%m_%d_%H_%M_%S_%f")
         filename = f"{timestamp}.json"

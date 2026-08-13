@@ -110,6 +110,12 @@ class DualEngineerService:
         session_uid: int,
         final_json: Mapping[str, Any],
     ) -> Optional[Path]:
+        if self.session_state.m_session_info.m_session_uid != session_uid:
+            self.logger.warning(
+                "Ignoring final classification for non-active session %s",
+                session_uid,
+            )
+            return None
         try:
             self.latest_export = await self.recorder.finalize(session_uid, final_json)
         except Exception:  # pylint: disable=broad-exception-caught
@@ -324,25 +330,70 @@ class DualEngineerService:
         return driver_output, constructor_output, True
 
     def create_career(self, payload: Mapping[str, Any]) -> Dict[str, Any]:
+        season_name = self._bounded_text(payload.get("season_name") or "New season", "season_name", 80)
+        game_version = self._bounded_text(payload.get("game_version") or "F1 25", "game_version", 40)
+        driver_a_key = self._bounded_text(payload.get("driver_a_key") or "driver-a", "driver_a_key", 80)
+        driver_b_key = self._bounded_text(payload.get("driver_b_key") or "driver-b", "driver_b_key", 80)
+        calendar = tuple(payload.get("calendar") or ())
+        if len(calendar) > 40:
+            raise ValueError("calendar cannot contain more than 40 events")
+        calendar = tuple(self._bounded_text(value, "calendar event", 80) for value in calendar)
         career_id = self.database.create_career(
-            str(payload.get("season_name") or "New season"),
-            str(payload.get("game_version") or "F1 25"),
-            str(payload.get("driver_a_key") or "driver-a"),
-            str(payload.get("driver_b_key") or "driver-b"),
-            calendar=tuple(payload.get("calendar") or ()),
+            season_name,
+            game_version,
+            driver_a_key,
+            driver_b_key,
+            calendar=calendar,
             rules=PointsRules(**(payload.get("scoring") or {})),
         )
         self.database.set_preference("active_career_id", career_id)
         return self.career_detail_json(career_id)
 
     def import_career_standings(self, career_id: int, payload: Mapping[str, Any]) -> Dict[str, Any]:
+        drivers = payload.get("drivers") or ()
+        constructors = payload.get("constructors") or {}
+        if not isinstance(drivers, (list, tuple)) or len(drivers) > 40:
+            raise ValueError("drivers must be a list with at most 40 entries")
+        if not isinstance(constructors, dict) or len(constructors) > 20:
+            raise ValueError("constructors must be an object with at most 20 entries")
+        current_round = int(payload.get("current_round") or 0)
+        if not 0 <= current_round <= 100:
+            raise ValueError("current_round must be between 0 and 100")
+        bounded_drivers = []
+        for driver in drivers:
+            if not isinstance(driver, Mapping):
+                raise ValueError("each driver must be an object")
+            points = int(driver.get("points", 0))
+            if not 0 <= points <= 100000:
+                raise ValueError("driver points must be between 0 and 100000")
+            bounded_drivers.append({
+                "driver_key": self._bounded_text(driver.get("driver_key"), "driver_key", 80),
+                "driver_name": self._bounded_text(driver.get("driver_name"), "driver_name", 80),
+                "team": self._bounded_text(driver.get("team"), "team", 80, allow_empty=True) or None,
+                "points": points,
+            })
+        bounded_constructors = {}
+        for team, points_value in constructors.items():
+            points = int(points_value)
+            if not 0 <= points <= 100000:
+                raise ValueError("constructor points must be between 0 and 100000")
+            bounded_constructors[self._bounded_text(team, "constructor team", 80)] = points
         self.database.import_standings(
             career_id,
-            payload.get("drivers") or (),
-            payload.get("constructors") or {},
-            current_round=int(payload.get("current_round") or 0),
+            bounded_drivers,
+            bounded_constructors,
+            current_round=current_round,
         )
         return self.career_detail_json(career_id)
+
+    @staticmethod
+    def _bounded_text(value: Any, field: str, limit: int, *, allow_empty: bool = False) -> str:
+        text = str(value or "").strip()
+        if not text and not allow_empty:
+            raise ValueError(f"{field} must not be empty")
+        if len(text) > limit or "\x00" in text:
+            raise ValueError(f"{field} must be at most {limit} characters")
+        return text
 
     def activate_career(self, career_id: int) -> Dict[str, Any]:
         if not self.database.get_career(career_id):
@@ -361,10 +412,10 @@ class DualEngineerService:
     def export_session_zip(self, session_uid: str) -> Path:
         folder = self._session_path(session_uid)
         candidate = self.settings.export_directory_path / f"{folder.name}.zip"
-        index = 2
-        while candidate.exists():
-            candidate = self.settings.export_directory_path / f"{folder.name}_{index}.zip"
-            index += 1
+        if candidate.is_symlink():
+            raise ValueError("Session archive path must not be a symlink")
+        if candidate.is_file():
+            return candidate
         with zipfile.ZipFile(candidate, "x", compression=zipfile.ZIP_DEFLATED, compresslevel=6) as archive:
             for item in sorted(folder.rglob("*")):
                 if item.is_file() and not item.is_symlink():
@@ -392,26 +443,23 @@ class DualEngineerService:
         return path
 
     async def _sample_loop(self) -> None:
-        try:
-            while not self.shutdown_event.is_set():
-                await asyncio.sleep(self.settings.sample_interval_seconds)
-                uid = self.session_state.m_session_info.m_session_uid
-                if not uid:
+        while not self.shutdown_event.is_set():
+            await asyncio.sleep(self.settings.sample_interval_seconds)
+            uid = self.session_state.m_session_info.m_session_uid
+            if not uid:
+                continue
+            for index in (self.driver_a_index, self.driver_b_index):
+                if index is None:
                     continue
-                for index in (self.driver_a_index, self.driver_b_index):
-                    if index is None:
-                        continue
-                    sample = telemetry_sample_from_state(self.session_state, uid, index)
-                    if not sample:
-                        continue
-                    self.recorder.enqueue_sample(sample)
-                    self._append_trace(sample)
-                now = time.monotonic()
-                if now - self._last_feed_update >= 1.0:
-                    self._update_engineer_feed()
-                    self._last_feed_update = now
-        except asyncio.CancelledError:
-            raise
+                sample = telemetry_sample_from_state(self.session_state, uid, index)
+                if not sample:
+                    continue
+                self.recorder.enqueue_sample(sample)
+                self._append_trace(sample)
+            now = time.monotonic()
+            if now - self._last_feed_update >= 1.0:
+                self._update_engineer_feed()
+                self._last_feed_update = now
 
     def _append_trace(self, sample: TelemetrySample) -> None:
         previous_lap = self._trace_laps.get(sample.driver_index)
@@ -421,7 +469,7 @@ class DualEngineerService:
         self._traces[sample.driver_index].append(sample)
 
     def _update_engineer_feed(self) -> None:
-        for label, index in (("A", self.driver_a_index), ("B", self.driver_b_index)):
+        for index in (self.driver_a_index, self.driver_b_index):
             if index is None or not self._valid_driver_index(index):
                 continue
             driver = self.session_state.m_driver_data[index]
@@ -486,7 +534,8 @@ class DualEngineerService:
         for index in available:
             if index not in candidates:
                 candidates.append(index)
-        self.driver_a_index, self.driver_b_index = candidates[:2]
+        self.driver_a_index = candidates[0]
+        self.driver_b_index = candidates[1]
         self.database.set_preference("driver_selection", {
             "names": [self._driver_name(self.driver_a_index), self._driver_name(self.driver_b_index)]
         })

@@ -115,6 +115,27 @@ class EngineerSettings(ConfigDiffMixin, BaseModel):
         description="Maximum queued raw telemetry packets",
         json_schema_extra={"ui": {"type": "text_box", "visible": False}},
     )
+    max_session_size_mb: int = Field(
+        default=2048,
+        ge=128,
+        le=8192,
+        description="Maximum raw packet capture size per session in MiB",
+        json_schema_extra={"ui": {"type": "text_box", "visible": False}},
+    )
+    max_export_storage_gb: int = Field(
+        default=20,
+        ge=1,
+        le=1024,
+        description="Maximum application-owned session storage before new recordings are refused",
+        json_schema_extra={"ui": {"type": "text_box", "visible": True}},
+    )
+    minimum_free_space_mb: int = Field(
+        default=2048,
+        ge=256,
+        le=1024 * 1024,
+        description="Minimum free disk space required to start or extend a recording",
+        json_schema_extra={"ui": {"type": "text_box", "visible": True}},
+    )
 
     @field_validator("export_directory")
     @classmethod

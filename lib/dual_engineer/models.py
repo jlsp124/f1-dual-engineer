@@ -10,6 +10,13 @@ from typing import Any, Dict, Optional, Sequence, Tuple
 Float4 = Tuple[float, float, float, float]
 
 
+def csv_safe_value(value: Any) -> Any:
+    """Keep untrusted text inert when a CSV is opened in a spreadsheet."""
+    if isinstance(value, str) and value.lstrip(" \t\r\n").startswith(("=", "+", "-", "@")):
+        return "'" + value
+    return value
+
+
 @dataclass(frozen=True, slots=True)
 class TelemetrySample:
     """One analysis-friendly observation for one participant.
@@ -66,7 +73,8 @@ class TelemetrySample:
         row: Dict[str, Any] = {}
         for item in fields(self):
             value = getattr(self, item.name)
-            row[item.name] = "|".join(str(v) for v in value) if isinstance(value, tuple) else value
+            serialized = "|".join(str(v) for v in value) if isinstance(value, tuple) else value
+            row[item.name] = csv_safe_value(serialized)
         return row
 
 

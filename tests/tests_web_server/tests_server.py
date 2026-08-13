@@ -88,6 +88,30 @@ class TestBaseWebServer:
         server = _make_server(client_event_mappings=mappings)
         assert server.m_client_event_mappings == mappings
 
+    def test_dashboard_origin_requires_server_owned_local_host_and_port(self):
+        server = _make_server(port=8080)
+        assert server.origin_allowed("http://localhost:8080", "localhost:8080")
+        assert server.origin_allowed("http://127.0.0.1:8080", "127.0.0.1:8080")
+        assert not server.origin_allowed(None, "localhost:8080")
+        assert not server.origin_allowed("null", "localhost:8080")
+        assert not server.origin_allowed("http://evil.example:8080", "evil.example:8080")
+        assert not server.origin_allowed("http://localhost:8081", "localhost:8081")
+        assert not server.origin_allowed("http://localhost:8080", "rebound.example:8080")
+
+    def test_socketio_uses_bounded_same_origin_policy(self):
+        server = _make_server(port=8080)
+        assert server.m_sio.eio.max_http_buffer_size == 256 * 1024
+        assert server._socketio_origin_allowed(
+            "http://localhost:8080", {"HTTP_HOST": "localhost:8080"}
+        )
+        assert not server._socketio_origin_allowed(
+            "http://evil.example:8080", {"HTTP_HOST": "evil.example:8080"}
+        )
+
+    def test_quart_enforces_global_body_limit(self):
+        server = _make_server()
+        assert server.m_app.config["MAX_CONTENT_LENGTH"] == 256 * 1024
+
     def test_get_stats_returns_dict(self):
         server = _make_server()
         stats = server.get_stats()

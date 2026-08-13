@@ -9,18 +9,19 @@ import json
 import logging
 import os
 import re
+import shutil
 import time
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Iterable, Mapping, Optional, Sequence, TextIO, Tuple
+from typing import Any, Dict, Mapping, Optional, TextIO, Tuple
 
 from lib.config.schema.engineer import EngineerSettings
 from lib.packet_cap import F1PktCapFileHeader, F1PktCapMessage, ZlibCompressionHelper
 
 from .analysis import analyze_laps
 from .career import CareerDatabase
-from .models import LapTrace, TelemetrySample
+from .models import LapTrace, TelemetrySample, csv_safe_value
 
 
 _INVALID_PATH_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]+')
@@ -65,14 +66,28 @@ class StreamingPacketCaptureWriter:
     def packet_count(self) -> int:
         return self._count
 
-    def write(self, raw_packet: bytes, timestamp: Optional[float] = None) -> None:
+    @property
+    def bytes_written(self) -> int:
+        return self._file.tell()
+
+    def write(
+        self,
+        raw_packet: bytes,
+        timestamp: Optional[float] = None,
+        *,
+        max_bytes: Optional[int] = None,
+    ) -> bool:
         if self._closed:
             raise RuntimeError("Cannot write to a closed packet capture")
         message = F1PktCapMessage(raw_packet, timestamp=timestamp, is_little_endian=True)
-        self._file.write(message.to_bytes(self._compression))
+        serialized = message.to_bytes(self._compression)
+        if max_bytes is not None and self._file.tell() + len(serialized) > max_bytes:
+            return False
+        self._file.write(serialized)
         self._count += 1
         if self._count % 256 == 0:
             self._file.flush()
+        return True
 
     def close(self) -> None:
         if self._closed:
@@ -118,11 +133,17 @@ class SessionRecorder:
         self.root = settings.export_directory_path
         self.root.mkdir(parents=True, exist_ok=True)
         self.database = database or CareerDatabase(self.root / "f1_dual_engineer.sqlite")
+        self._owned_storage_bytes = self._calculate_owned_storage_bytes()
+        self._last_owned_storage_refresh = time.monotonic()
+        self._cached_free_bytes = shutil.disk_usage(self.root).free
+        self._last_free_space_check = time.monotonic()
         self.queue: asyncio.Queue[Tuple[Any, ...]] = asyncio.Queue(maxsize=settings.raw_packet_queue_size)
         self._worker_task: Optional[asyncio.Task] = None
         self._current: Optional[_OpenSession] = None
+        self._pending_metadata: Dict[int, Dict[str, Any]] = {}
         self.dropped_raw_packets = 0
         self.dropped_samples = 0
+        self.storage_quota_rejections = 0
 
     def start(self) -> asyncio.Task:
         if self._worker_task and not self._worker_task.done():
@@ -188,20 +209,39 @@ class SessionRecorder:
                 kind = item[0]
                 if kind == "raw":
                     _, uid, raw, timestamp = item
+                    if not self._storage_budget_available(len(raw)):
+                        self.dropped_raw_packets += 1
+                        continue
                     current = self._ensure_session(uid)
-                    current.packet_writer.write(raw, timestamp)
+                    before_write = current.packet_writer.bytes_written
+                    if not current.packet_writer.write(
+                        raw,
+                        timestamp,
+                        max_bytes=self.settings.max_session_size_mb * 1024 * 1024,
+                    ):
+                        self.dropped_raw_packets += 1
+                    else:
+                        self._owned_storage_bytes += current.packet_writer.bytes_written - before_write
                 elif kind == "sample":
                     sample: TelemetrySample = item[1]
+                    if not self._storage_budget_available(4096):
+                        self.dropped_samples += 1
+                        continue
                     current = self._ensure_session(sample.session_uid)
                     current.samples_writer.writerow(sample.to_row())
                     current.samples_written += 1
+                    self._owned_storage_bytes += 4096
                     if current.samples_written % 100 == 0:
                         current.samples_file.flush()
                 elif kind == "metadata":
                     _, uid, metadata = item
-                    current = self._ensure_session(uid)
-                    current.metadata.update(metadata)
-                    self.database.register_session(uid, current.folder, current.metadata)
+                    if self._current and self._current.uid == uid:
+                        self._current.metadata.update(metadata)
+                        self.database.register_session(uid, self._current.folder, self._current.metadata)
+                    else:
+                        # Metadata is only a candidate. Persistent artifacts are
+                        # created after a valid raw packet or structured sample.
+                        self._pending_metadata = {uid: dict(metadata)}
                 elif kind == "finalize":
                     _, uid, final_json, reason, future = item
                     try:
@@ -234,8 +274,14 @@ class SessionRecorder:
         samples_file = (folder / "telemetry_samples.csv.part").open("x", newline="", encoding="utf-8")
         samples_writer = csv.DictWriter(samples_file, fieldnames=TelemetrySample.csv_columns(), extrasaction="raise")
         samples_writer.writeheader()
+        self._owned_storage_bytes += packet_writer.bytes_written + samples_file.tell()
         started_at = now.isoformat()
-        metadata = {"session_uid": session_uid, "started_at": started_at}
+        metadata = {
+            "session_uid": session_uid,
+            "started_at": started_at,
+            **self._pending_metadata.pop(session_uid, {}),
+        }
+        self._pending_metadata.clear()
         self._current = _OpenSession(
             uid=session_uid,
             folder=folder,
@@ -247,6 +293,37 @@ class SessionRecorder:
         )
         self.database.register_session(session_uid, folder, metadata)
         return self._current
+
+    def _storage_budget_available(self, pending_bytes: int) -> bool:
+        """Apply a global app-owned quota and a free-space floor before writes."""
+        now = time.monotonic()
+        if now - self._last_free_space_check >= 1:
+            self._cached_free_bytes = shutil.disk_usage(self.root).free
+            self._last_free_space_check = now
+        if now - self._last_owned_storage_refresh >= 60:
+            self._owned_storage_bytes = self._calculate_owned_storage_bytes()
+            self._last_owned_storage_refresh = now
+        if self._cached_free_bytes - pending_bytes < self.settings.minimum_free_space_mb * 1024 * 1024:
+            self.storage_quota_rejections += 1
+            if self.storage_quota_rejections == 1:
+                self.logger.error("Recording paused: export drive is below the free-space floor")
+            return False
+        if self._owned_storage_bytes + pending_bytes > self.settings.max_export_storage_gb * 1024**3:
+            self.storage_quota_rejections += 1
+            if self.storage_quota_rejections == 1:
+                self.logger.error("Recording paused: export storage quota reached")
+            return False
+        return True
+
+    def _calculate_owned_storage_bytes(self) -> int:
+        total = 0
+        for path in self.root.rglob("*"):
+            try:
+                if path.is_file() and not path.is_symlink():
+                    total += path.stat().st_size
+            except OSError:
+                continue
+        return total
 
     def _finalize_if_current(
         self,
@@ -299,6 +376,8 @@ class SessionRecorder:
         self.database.finalize_session(current.uid, destination, metadata)
         self._current = None
         self._apply_retention()
+        self._owned_storage_bytes = self._calculate_owned_storage_bytes()
+        self._last_owned_storage_refresh = time.monotonic()
         return destination
 
     def _final_folder(self, current: _OpenSession) -> Path:
@@ -341,7 +420,7 @@ class SessionRecorder:
             writer.writeheader()
             for entry in entries:
                 result = entry.get("final-classification") or {}
-                writer.writerow({
+                row = {
                     "index": entry.get("index"),
                     "driver-name": entry.get("driver-name"),
                     "team": entry.get("team"),
@@ -356,7 +435,8 @@ class SessionRecorder:
                     "penalties-time": result.get("penalties-time"),
                     "num-penalties": result.get("num-penalties"),
                     "num-pit-stops": result.get("num-pit-stops"),
-                })
+                }
+                writer.writerow({key: csv_safe_value(value) for key, value in row.items()})
 
     @staticmethod
     def _write_laps(folder: Path, final_json: Mapping[str, Any]) -> None:
@@ -372,7 +452,7 @@ class SessionRecorder:
                 history = (entry.get("lap-time-history") or {}).get("lap-history-data") or []
                 for lap_number, lap in enumerate(history, start=1):
                     tyre = lap.get("tyre-set-info") or {}
-                    writer.writerow({
+                    row = {
                         "driver-index": entry.get("index"),
                         "driver-name": entry.get("driver-name"),
                         "lap-number": lap_number,
@@ -384,7 +464,8 @@ class SessionRecorder:
                         "tyre-compound": tyre.get("visual-tyre-compound"),
                         "tyre-age": tyre.get("tyre-age-laps"),
                         "top-speed-kmph": lap.get("top-speed-kmph"),
-                    })
+                    }
+                    writer.writerow({key: csv_safe_value(value) for key, value in row.items()})
 
     def _write_analysis_exports(
         self,
@@ -555,12 +636,41 @@ class SessionRecorder:
         if self.settings.retention_days <= 0:
             return
         cutoff = time.time() - (self.settings.retention_days * 86400)
+        root = self.root.resolve(strict=True)
+        cataloged_folders = set()
+        for session in self.database.list_sessions():
+            if not session.get("finalized"):
+                continue
+            try:
+                folder = Path(session["folder"]).resolve(strict=True)
+            except (KeyError, OSError, RuntimeError):
+                continue
+            if folder.parent == root:
+                cataloged_folders.add(folder)
+
         for child in self.root.iterdir():
-            if child.is_dir() and not child.name.startswith(".recording_") and child.stat().st_mtime < cutoff:
-                # Retention is opt-in and restricted to finalized children of the configured export root.
-                for item in sorted(child.rglob("*"), reverse=True):
-                    if item.is_file() or item.is_symlink():
-                        item.unlink()
-                    elif item.is_dir():
-                        item.rmdir()
-                child.rmdir()
+            is_junction = getattr(child, "is_junction", lambda: False)()
+            if not child.is_dir() or child.is_symlink() or is_junction:
+                continue
+            if child.name.startswith(".recording_") or child.stat().st_mtime >= cutoff:
+                continue
+            resolved_child = child.resolve(strict=True)
+            if resolved_child not in cataloged_folders:
+                self.logger.warning("Retention skipped uncataloged directory %s", child)
+                continue
+            items = list(child.rglob("*"))
+            if any(
+                item.is_symlink() or getattr(item, "is_junction", lambda: False)()
+                for item in items
+            ):
+                self.logger.warning("Retention skipped linked session directory %s", child)
+                continue
+            if any(not item.resolve(strict=False).is_relative_to(resolved_child) for item in items):
+                self.logger.warning("Retention skipped out-of-root session directory %s", child)
+                continue
+            for item in sorted(items, reverse=True):
+                if item.is_file():
+                    item.unlink()
+                elif item.is_dir():
+                    item.rmdir()
+            child.rmdir()

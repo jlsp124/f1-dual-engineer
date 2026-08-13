@@ -15,6 +15,9 @@ def test_engineer_defaults_are_release_safe(tmp_path: Path, monkeypatch: pytest.
     assert settings.auto_record is True
     assert settings.sample_rate_hz == 20
     assert settings.retention_days == 0
+    assert settings.max_session_size_mb == 2048
+    assert settings.max_export_storage_gb == 20
+    assert settings.minimum_free_space_mb == 2048
     assert settings.export_directory_path == tmp_path / "exports"
 
 

@@ -454,8 +454,13 @@ class PngAppMgrBase(QObject):
                 pid_recv_ts = time.time_ns()
                 with self._process_lock:
                     current_pid = self.process.pid if self.process else None
-                    changed = (current_pid is not None and current_pid != pid)
-                    self.child_pid = pid
+                    if current_pid is None or pid != current_pid:
+                        self.warning_log(
+                            f"Ignoring unverified {self.DISPLAY_NAME} PID token: {pid}"
+                        )
+                        continue
+                    changed = self.child_pid != pid
+                    self.child_pid = current_pid
                     start_ts = self._proc_start_ts_ns
                 if start_ts is not None:
                     self._lifecycle_stats.track_packet_latency(
@@ -469,6 +474,11 @@ class PngAppMgrBase(QObject):
             if port := extract_ipc_port_from_line(line):
                 port_recv_ts = time.time_ns()
                 with self._process_lock:
+                    if self.ipc_port is not None:
+                        self.warning_log(
+                            f"Ignoring repeated {self.DISPLAY_NAME} IPC port token"
+                        )
+                        continue
                     self.ipc_port = port
                     start_ts = self._proc_start_ts_ns
                 if start_ts is not None:

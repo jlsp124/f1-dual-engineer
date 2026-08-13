@@ -301,6 +301,7 @@ class SessionState:
     """
 
     MAX_DRIVERS: int = 24
+    MAX_EVENT_HISTORY: int = 2048
 
     __slots__ = (
         'm_logger',
@@ -775,6 +776,9 @@ class SessionState:
 
         for index, data in enumerate(packet.m_classificationData):
             driver = self._getObjectByIndex(index, create=False)
+            if not driver:
+                self.m_logger.warning("Ignoring final classification for unknown driver index %s", index)
+                continue
 
             driver.onLapChange(
                 old_lap_number=data.m_numLaps,
@@ -939,6 +943,8 @@ class SessionState:
 
         # Update the fastest lap variable
         obj_to_be_updated = self._getObjectByIndex(packet.m_carIdx, reason='Session history update')
+        if not obj_to_be_updated:
+            return
         obj_to_be_updated.m_packet_copies.m_packet_session_history = packet
         if (packet.m_bestLapTimeLapNum > 0) and (packet.m_bestLapTimeLapNum <= packet.m_numLaps):
             obj_to_be_updated.m_lap_info.m_best_lap_ms = packet.m_lapHistoryData[packet.m_bestLapTimeLapNum-1].m_lapTimeInMS
@@ -1005,6 +1011,15 @@ class SessionState:
         """
 
         obj_to_be_updated = self._getObjectByIndex(packet.m_carIdx, reason='Tyre sets update')
+        if not obj_to_be_updated:
+            return
+        if not 0 <= packet.m_fittedIdx < len(packet.m_tyreSetData):
+            self.m_logger.warning(
+                "Ignoring invalid fitted tyre index %s for driver %s",
+                packet.m_fittedIdx,
+                packet.m_carIdx,
+            )
+            return
         obj_to_be_updated.m_packet_copies.m_packet_tyre_sets = packet
         obj_to_be_updated.m_tyre_info.tyre_life_remaining_laps = packet.m_tyreSetData[packet.m_fittedIdx].m_lifeSpan
 
@@ -1110,9 +1125,14 @@ class SessionState:
 
         collision_obj = self._getCollisionObj(packet.m_vehicle_1_index, packet.m_vehicle_2_index)
         if collision_obj:
-            self.m_driver_data[packet.m_vehicle_1_index].m_collision_records.append(collision_obj)
-            self.m_driver_data[packet.m_vehicle_2_index].m_collision_records.append(collision_obj)
+            driver_one_records = self.m_driver_data[packet.m_vehicle_1_index].m_collision_records
+            driver_two_records = self.m_driver_data[packet.m_vehicle_2_index].m_collision_records
+            driver_one_records.append(collision_obj)
+            driver_two_records.append(collision_obj)
             self.m_collision_records.append(collision_obj)
+            del driver_one_records[:-self.MAX_EVENT_HISTORY]
+            del driver_two_records[:-self.MAX_EVENT_HISTORY]
+            del self.m_collision_records[:-self.MAX_EVENT_HISTORY]
 
     def processOvertakeEvent(self, record: PacketEventData.Overtake) -> None:
         """Processes an overtake event and adds it to the overtake history
@@ -1552,7 +1572,12 @@ class SessionState:
             if driver and driver.is_valid
         }
 
-    def _getObjectByIndex(self, index: int, create: bool = True, reason: str = None) -> DataPerDriver:
+    def _getObjectByIndex(
+        self,
+        index: int,
+        create: bool = True,
+        reason: str = None,
+    ) -> Optional[DataPerDriver]:
         """Looks up and retrieves the object at the specified index.
             If not found and create is True, creates the object, inserts into the list, and returns it.
 
@@ -1565,7 +1590,9 @@ class SessionState:
             DataPerDriver: The data object associated with the given index
         """
 
-        assert index is not None, "Index cannot be None"
+        if not isinstance(index, int) or not 0 <= index < len(self.m_driver_data):
+            self.m_logger.warning("Ignoring invalid driver index %r. Reason: %s", index, reason)
+            return None
 
         if not (obj := self.m_driver_data[index]) and create:
             self.m_logger.debug("Creating new DataPerDriver for index %s. Reason: %s", index, reason)

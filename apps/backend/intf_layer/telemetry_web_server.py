@@ -26,7 +26,6 @@ import logging
 import webbrowser
 from http import HTTPStatus
 from typing import Any, Dict, Optional, Tuple
-from urllib.parse import urlsplit
 
 from apps.backend.state_mgmt_layer import SessionState
 from apps.backend.state_mgmt_layer.intf import (PeriodicUpdateData,
@@ -256,13 +255,15 @@ class TelemetryWebServer(BaseWebServer):
             except (FileNotFoundError, ValueError) as error:
                 return {"error": str(error)}, HTTPStatus.NOT_FOUND
 
-        @self.http_route('/api/dual-engineer/sessions/<session_uid>/export')
+        @self.http_route('/api/dual-engineer/sessions/<session_uid>/export', methods=['POST'])
         async def dualEngineerExport(session_uid: str) -> Any:
             if not self.m_dual_engineer_service:
                 return {"error": "Dual Engineer is disabled"}, HTTPStatus.SERVICE_UNAVAILABLE
+            if not self._same_origin_request():
+                return {"error": "Cross-origin request rejected"}, HTTPStatus.FORBIDDEN
             try:
                 archive = self.m_dual_engineer_service.export_session_zip(session_uid)
-            except (FileNotFoundError, OSError, ValueError) as error:
+            except (OSError, ValueError) as error:
                 return {"error": str(error)}, HTTPStatus.NOT_FOUND
             return await self.send_from_directory(archive.parent, archive.name, as_attachment=True)
 
@@ -274,7 +275,7 @@ class TelemetryWebServer(BaseWebServer):
                 return {"error": "Open Session Folder is limited to this computer"}, HTTPStatus.FORBIDDEN
             try:
                 folder = self.m_dual_engineer_service.open_session_folder(session_uid)
-            except (FileNotFoundError, OSError, ValueError) as error:
+            except (OSError, ValueError) as error:
                 return {"error": str(error)}, HTTPStatus.BAD_REQUEST
             return {"opened": str(folder)}, HTTPStatus.OK
 
@@ -341,9 +342,7 @@ class TelemetryWebServer(BaseWebServer):
 
     def _same_origin_request(self) -> bool:
         origin = self.request.headers.get("Origin")
-        if not origin:
-            return True
-        return urlsplit(origin).netloc.casefold() == self.request.host.casefold()
+        return self.origin_allowed(origin, self.request.host)
 
     def _loopback_request(self) -> bool:
         return self.request.remote_addr in {"127.0.0.1", "::1", "localhost", None}

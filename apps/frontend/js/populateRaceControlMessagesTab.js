@@ -224,6 +224,12 @@ function populateRaceControlMessagesTab(containerElement, initialRowData) {
         return fn(msg);
     }
 
+    function textCell(value) {
+        const span = document.createElement('span');
+        span.textContent = String(value ?? '');
+        return span;
+    }
+
     // Define column definitions for AG Grid
     const columnDefs = [
         { headerName: 'ID', field: 'id', sortable: true, filter: false, width: 80 },
@@ -235,14 +241,14 @@ function populateRaceControlMessagesTab(containerElement, initialRowData) {
             filter: false,
             width: 200,
             valueGetter: params => formatRaceCtrlLocation(params.data),
-            cellRenderer: params => params.value,
+            cellRenderer: params => textCell(params.value),
             getQuickFilterText: params => params.value,
         },
         {
             headerName: 'Details',
             field: 'details',
             flex: 1,
-            cellRenderer: params => renderDetailsCell(params.data),
+            cellRenderer: params => textCell(renderDetailsCell(params.data)),
             getQuickFilterText: params => renderDetailsCell(params.data)
         }
     ];

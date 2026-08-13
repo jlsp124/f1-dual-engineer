@@ -49,8 +49,11 @@ def extract_pid_from_line(line: str) -> Optional[int]:
     Returns:
         The PID as an int if found, otherwise None.
     """
-    match = _PID_TAG_REGEX.search(line)
-    return int(match.group(1)) if match else None
+    match = _PID_TAG_REGEX.fullmatch(line.strip())
+    if not match:
+        return None
+    pid = int(match.group(1))
+    return pid if pid > 0 else None
 
 def report_ipc_port_from_child(port: int) -> None:
     """
@@ -65,8 +68,11 @@ def extract_ipc_port_from_line(line: str) -> Optional[int]:
     """
     Parse IPC port from a line of stdout.
     """
-    match = _IPC_PORT_TAG_REGEX.search(line)
-    return int(match.group(1)) if match else None
+    match = _IPC_PORT_TAG_REGEX.fullmatch(line.strip())
+    if not match:
+        return None
+    port = int(match.group(1))
+    return port if 1 <= port <= 65535 else None
 
 def notify_parent_init_complete() -> None:
     """Call this in the child process to notify the parent that initialization is complete."""
@@ -74,4 +80,4 @@ def notify_parent_init_complete() -> None:
 
 def is_init_complete(line: str) -> bool:
     """Call this in the parent process to check if the child process has completed initialization."""
-    return _INIT_COMPLETE_STR in line
+    return line.strip() == _INIT_COMPLETE_STR

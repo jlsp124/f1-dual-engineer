@@ -20,6 +20,7 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
+import os
 import struct
 import sys
 import time
@@ -54,9 +55,20 @@ class NoCompressionHelper(CompressionHelper):
         return False
 
 class ZlibCompressionHelper(CompressionHelper):
+    MAX_DECOMPRESSED_PACKET_BYTES = 64 * 1024
+
     def decompress(self, data: bytes) -> bytes:
         try:
-            return zlib.decompress(data)
+            decompressor = zlib.decompressobj()
+            payload = decompressor.decompress(data, self.MAX_DECOMPRESSED_PACKET_BYTES + 1)
+            if len(payload) > self.MAX_DECOMPRESSED_PACKET_BYTES or decompressor.unconsumed_tail:
+                raise ValueError("Compressed telemetry packet exceeds the 64 KiB output limit")
+            payload += decompressor.flush()
+            if len(payload) > self.MAX_DECOMPRESSED_PACKET_BYTES:
+                raise ValueError("Compressed telemetry packet exceeds the 64 KiB output limit")
+            if not decompressor.eof or decompressor.unused_data:
+                raise ValueError("Compressed telemetry packet is truncated or has trailing data")
+            return payload
         except zlib.error as e:
             raise ValueError(f"Zlib decompression failed: {e}") from e
 
@@ -211,13 +223,20 @@ class F1PktCapFileHeader:
         Returns:
         - F1PktCapFileHeader: Deserialized file header.
         """
+        if len(data) != cls.HEADER_LEN:
+            raise ValueError(f"Capture header must be exactly {cls.HEADER_LEN} bytes")
         result = struct.unpack(F1PktCapFileHeader.HEADER_STRUCT_STR, data)
         (
-            _, # magic_number,
+            magic_number,
             flags_byte,
             version_packed,
             num_packets
         ) = result
+
+        if magic_number != cls.MAGIC_NUMBER:
+            raise ValueError("Not an F1 UDP packet capture")
+        if flags_byte & ~0x01:
+            raise ValueError("Capture header contains unsupported flags")
 
         is_compressed = bool(flags_byte & 0x01)
         is_little_endian = bool((version_packed >> 7) & 0x01)
@@ -235,6 +254,8 @@ class F1PktCapMessage:
     """Represents an entry in the F1PacketCapture."""
 
     HEADER_LEN = 8
+    MAX_STORED_PACKET_BYTES = 1024 * 1024
+    MAX_DECOMPRESSED_PACKET_BYTES = 64 * 1024
 
     # Offset | Size | Description
     # -------+------+----------------------------------------
@@ -291,14 +312,21 @@ class F1PktCapMessage:
         Raises:
         - ValueError: If the length of the payload does not match the expected length specified in the header.
         """
-        # Rest of the code remains the same
+        if len(data) < cls.HEADER_LEN:
+            raise ValueError("Packet capture entry is truncated")
         endianness_str = '<' if is_little_endian else '>'
-        timestamp, length = struct.unpack(f'{endianness_str}fI', data[:8])
-        compressed_payload = data[8:]
-        payload = compression_helper.decompress(compressed_payload)
+        timestamp, length = struct.unpack(f'{endianness_str}fI', data[:cls.HEADER_LEN])
+        compressed_payload = data[cls.HEADER_LEN:]
         if len(compressed_payload) != length:
-            raise ValueError(f"Data length mismatch. Header length: {length}, Actual length: {len(payload)}")
-        return F1PktCapMessage(payload, timestamp)
+            raise ValueError(
+                f"Data length mismatch. Header length: {length}, Actual length: {len(compressed_payload)}"
+            )
+        if length > cls.MAX_STORED_PACKET_BYTES:
+            raise ValueError("Stored telemetry packet exceeds the 1 MiB entry limit")
+        payload = compression_helper.decompress(compressed_payload)
+        if len(payload) > cls.MAX_DECOMPRESSED_PACKET_BYTES:
+            raise ValueError("Telemetry packet exceeds the 64 KiB packet limit")
+        return F1PktCapMessage(payload, timestamp, is_little_endian)
 
 class F1PacketCapture:
     """Represents a collection of F1PktCapMessage objects."""
@@ -307,6 +335,10 @@ class F1PacketCapture:
     minor_ver = 1
     is_little_endian = (sys.byteorder == "little")
     file_extension = "f1pcap"
+    MAX_CAPTURE_FILE_BYTES = 2 * 1024 * 1024 * 1024
+    MAX_PACKET_COUNT = 2_000_000
+    MAX_TOTAL_DECOMPRESSED_BYTES = 1024 * 1024 * 1024
+    MAX_RETAINED_DECOMPRESSED_BYTES = 64 * 1024 * 1024
 
     def __init__(self, compressed:Optional[bool]=None, file_name:Optional[str]=None):
         """Initialize a F1PacketCapture.
@@ -321,6 +353,8 @@ class F1PacketCapture:
             raise ValueError("Must specify either compressed or file_name")
 
         self.m_packet_history: List[F1PktCapMessage] = []
+        self._source_file: Optional[str] = None
+        self._stream_from_file = False
         self.is_compressed = compressed
 
         if file_name:
@@ -387,7 +421,7 @@ class F1PacketCapture:
             - int: The number of bytes written. 0 if nothing is written
         """
 
-        if len(self.m_packet_history) == 0:
+        if self.getNumPackets() == 0:
             return None, 0, 0
 
         if file_name is None:
@@ -395,8 +429,15 @@ class F1PacketCapture:
             file_name = f"capture_{timestamp_str}.{self.file_extension}"
 
         byte_count = 0
-        packets_snapshot = list(self.m_packet_history)
-        total_packet_count = len(packets_snapshot)
+        total_packet_count = self.getNumPackets()
+        packet_iter = (
+            self.m_packet_history
+            if not self._stream_from_file
+            else (
+                F1PktCapMessage(data, timestamp=timestamp, is_little_endian=self.is_little_endian)
+                for timestamp, data in self.getPackets()
+            )
+        )
 
         # Construct the header
         header = F1PktCapFileHeader(
@@ -411,7 +452,7 @@ class F1PacketCapture:
             # First, write the header
             file.write(header.to_bytes())
             # Next write all packets
-            for curr_packet_count, entry in enumerate(packets_snapshot):
+            for curr_packet_count, entry in enumerate(packet_iter):
                 data_to_write = entry.to_bytes(self.m_compression_helper)
                 file.write(data_to_write)
                 byte_count += len(data_to_write)
@@ -435,9 +476,19 @@ class F1PacketCapture:
                 the number of packets in the file body
         """
 
+        file_size = os.path.getsize(file_name)
+        if file_size > self.MAX_CAPTURE_FILE_BYTES:
+            raise ValueError("Packet capture exceeds the 2 GiB file limit")
+
+        self._source_file = os.path.abspath(file_name)
+        self._stream_from_file = False
+        total_decompressed_bytes = 0
+        parsed_packet_count = 0
         with open(file_name, "rb") as file:
             # First, fetch the file header
             self.m_header = F1PktCapFileHeader.from_bytes(file.read(F1PktCapFileHeader.HEADER_LEN))
+            if self.m_header.num_packets > self.MAX_PACKET_COUNT:
+                raise ValueError("Packet capture declares too many entries")
             endianness_str = self.m_header.getEndiannessStr()
             if self.m_header.is_compressed:
                 self.m_compression_helper = ZlibCompressionHelper()
@@ -449,12 +500,18 @@ class F1PacketCapture:
                 entry_header_bytes = file.read(8)  # Assuming a fixed size for the header
                 if not entry_header_bytes:
                     break
+                if len(entry_header_bytes) != F1PktCapMessage.HEADER_LEN:
+                    raise ValueError("Packet capture contains a truncated entry header")
 
                 timestamp_bytes = entry_header_bytes[:4]
                 data_length_bytes = entry_header_bytes[4:]
                 data_length = struct.unpack(f'{endianness_str}I', data_length_bytes)[0]
+                if data_length > F1PktCapMessage.MAX_STORED_PACKET_BYTES:
+                    raise ValueError("Stored telemetry packet exceeds the 1 MiB entry limit")
 
                 payload = file.read(data_length)
+                if len(payload) != data_length:
+                    raise ValueError("Packet capture contains a truncated entry payload")
 
                 # Concatenate timestamp_bytes, data_length_bytes, and payload
                 entry_data = timestamp_bytes + data_length_bytes + payload
@@ -465,11 +522,21 @@ class F1PacketCapture:
                     self.m_header.is_little_endian,
                     self.m_compression_helper
                 )
-                self.m_packet_history.append(entry)
+                parsed_packet_count += 1
+                total_decompressed_bytes += len(entry.m_data)
+                if not self._stream_from_file:
+                    self.m_packet_history.append(entry)
+                    if total_decompressed_bytes > self.MAX_RETAINED_DECOMPRESSED_BYTES:
+                        self.m_packet_history.clear()
+                        self._stream_from_file = True
+                if parsed_packet_count > self.MAX_PACKET_COUNT:
+                    raise ValueError("Packet capture contains too many entries")
+                if total_decompressed_bytes > self.MAX_TOTAL_DECOMPRESSED_BYTES:
+                    raise ValueError("Packet capture exceeds the 1 GiB expanded-data limit")
 
-        if self.m_header.num_packets != len(self.m_packet_history):
+        if self.m_header.num_packets != parsed_packet_count:
             print(f"[WARN]: Number of packets in the file {self.m_header.num_packets} does not match the header "
-                             f"{len(self.m_packet_history)}. Possibly corrupt file", file=sys.stderr)
+                             f"{parsed_packet_count}. Possibly corrupt file", file=sys.stderr)
 
     def getPackets(self) -> Generator[Tuple[float, bytes], None, None]:
         """
@@ -478,7 +545,29 @@ class F1PacketCapture:
         Yields:
         - Tuple[float, bytes]: A tuple containing timestamp (float) and data (bytes) for each packet.
         """
-        yield from ((entry.m_timestamp, entry.m_data) for entry in self.m_packet_history)
+        if not self._stream_from_file:
+            yield from ((entry.m_timestamp, entry.m_data) for entry in self.m_packet_history)
+            return
+        if not self._source_file:
+            return
+        with open(self._source_file, "rb") as file:
+            header = F1PktCapFileHeader.from_bytes(file.read(F1PktCapFileHeader.HEADER_LEN))
+            helper: CompressionHelper = (
+                ZlibCompressionHelper() if header.is_compressed else NoCompressionHelper()
+            )
+            endianness_str = header.getEndiannessStr()
+            for _ in range(header.num_packets):
+                entry_header = file.read(F1PktCapMessage.HEADER_LEN)
+                if len(entry_header) != F1PktCapMessage.HEADER_LEN:
+                    raise ValueError("Packet capture contains a truncated entry header")
+                data_length = struct.unpack(f"{endianness_str}I", entry_header[4:])[0]
+                payload = file.read(data_length)
+                entry = F1PktCapMessage.from_bytes(
+                    entry_header + payload,
+                    header.is_little_endian,
+                    helper,
+                )
+                yield entry.m_timestamp, entry.m_data
 
     def getFirstTimestamp(self) -> float:
         """Returns the timestamp of the first packet in the capture
@@ -486,7 +575,9 @@ class F1PacketCapture:
         Returns:
             float: Timestamp
         """
-        return self.m_packet_history[0].m_timestamp if len(self.m_packet_history) > 0 else None
+        if self._stream_from_file:
+            return next(self.getPackets(), (None, None))[0]
+        return self.m_packet_history[0].m_timestamp if self.m_packet_history else None
 
     def clear(self) -> None:
         """
@@ -494,4 +585,6 @@ class F1PacketCapture:
         """
 
         self.m_packet_history.clear()
+        self._source_file = None
+        self._stream_from_file = False
         self.m_header.num_packets = 0

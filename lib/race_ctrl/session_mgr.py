@@ -38,9 +38,12 @@ class SessionRaceControlManager:
         drivers (Dict[int, DriverRaceControlManager]): Per-driver managers.
     """
 
+    MAX_MESSAGES = 4096
+
     def __init__(self) -> None:
         self.messages: List[RaceCtrlMsgBase] = []
         self.drivers: Dict[int, DriverRaceControlManager] = {}
+        self._next_message_id = 0
 
     def register_driver(self, driver_index: int, driver_mgr: DriverRaceControlManager) -> None:
         """Register a driver manager with this session."""
@@ -59,8 +62,11 @@ class SessionRaceControlManager:
         Returns:
             int: The message ID (its index in the session list).
         """
-        message._id = len(self.messages)
+        message._id = self._next_message_id
+        self._next_message_id += 1
         self.messages.append(message)
+        if len(self.messages) > self.MAX_MESSAGES:
+            del self.messages[:-self.MAX_MESSAGES]
         if is_propagated:
             return message._id
 
@@ -73,6 +79,7 @@ class SessionRaceControlManager:
     def clear(self) -> None:
         """Clear all session and driver messages. All registered drivers are automatically un-registered"""
         self.messages.clear()
+        self._next_message_id = 0
         for driver_mgr in self.drivers.values():
             driver_mgr.clear()
         self.drivers.clear()

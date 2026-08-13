@@ -23,10 +23,12 @@
 # -------------------------------------- IMPORTS -----------------------------------------------------------------------
 
 import os
+import socket
 from functools import wraps
 from pathlib import Path
 from typing import (Any, Awaitable, Callable, Coroutine, Dict, List, Optional,
                     Union)
+from urllib.parse import urlsplit
 
 import msgpack
 import socketio
@@ -75,6 +77,7 @@ class BaseWebServer:
         self.m_logger: PngLogger = logger
         self.m_port: int = port
         self.m_bind_address: str = bind_address
+        self.m_allowed_dashboard_hosts = self._discover_dashboard_hosts(bind_address)
         self.m_ver_str = ver_str
         self.m_cert_path: Optional[str] = cert_path
         self.m_key_path: Optional[str] = key_path
@@ -101,11 +104,13 @@ class BaseWebServer:
             static_url_path='/static'
         )
         self.m_app.config['PROPAGATE_EXCEPTIONS'] = False
+        self.m_app.config['MAX_CONTENT_LENGTH'] = 256 * 1024
 
         if enable_socketio:
             self.m_sio = socketio.AsyncServer(
                 async_mode='asgi',
-                cors_allowed_origins="*",
+                cors_allowed_origins=self._socketio_origin_allowed,
+                max_http_buffer_size=256 * 1024,
                 logger=False,
                 engineio_logger=False
             )
@@ -129,6 +134,13 @@ class BaseWebServer:
                 return url_for(endpoint, **values)
             return {"url_for": dated_url_for}
 
+        @self.m_app.before_request
+        async def reject_untrusted_host():
+            """Block Host-header and DNS-rebinding access before route dispatch."""
+            if not self._authority_allowed(quart_request.host):
+                return {"error": "Untrusted dashboard host"}, 421
+            return None
+
         # Disable caching for template paths, always.
         @self.m_app.after_request
         async def no_html_cache(response: Response) -> Response:
@@ -151,6 +163,57 @@ class BaseWebServer:
         async def handle_not_found(_e):
             self.m_logger.warning("404 %s %s — no matching route", quart_request.method, quart_request.path)
             return {"error": "Not found"}, 404
+
+    @staticmethod
+    def _discover_dashboard_hosts(bind_address: str) -> set[str]:
+        """Build a server-owned allowlist for loopback and local interface names."""
+        hosts = {"localhost", "127.0.0.1"}
+        if bind_address and bind_address != "0.0.0.0":
+            hosts.add(bind_address.casefold())
+        for name in {socket.gethostname(), socket.getfqdn()}:
+            if name:
+                hosts.add(name.rstrip(".").casefold())
+        try:
+            for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
+                hosts.add(info[4][0].casefold())
+        except socket.gaierror:
+            pass
+        return hosts
+
+    def _authority_allowed(self, authority: str) -> bool:
+        """Validate a Host-style authority against configured local hosts and port."""
+        if not authority or any(char in authority for char in ("\r", "\n", "\\", "/", "@")):
+            return False
+        try:
+            parsed = urlsplit(f"//{authority}")
+            port = parsed.port if parsed.port is not None else (443 if self.m_cert_path else 80)
+        except ValueError:
+            return False
+        return bool(
+            parsed.hostname
+            and parsed.hostname.rstrip(".").casefold() in self.m_allowed_dashboard_hosts
+            and port == self.m_port
+        )
+
+    def origin_allowed(self, origin: Optional[str], authority: Optional[str] = None) -> bool:
+        """Validate scheme, host and port without trusting the request Host as policy."""
+        if not origin or origin == "null":
+            return False
+        try:
+            parsed = urlsplit(origin)
+            origin_authority = parsed.netloc
+        except ValueError:
+            return False
+        expected_scheme = "https" if self.m_cert_path else "http"
+        return bool(
+            parsed.scheme == expected_scheme
+            and self._authority_allowed(origin_authority)
+            and (authority is None or self._authority_allowed(authority))
+        )
+
+    def _socketio_origin_allowed(self, origin: str, environ: Dict[str, Any]) -> bool:
+        """Require browser Socket.IO clients to use an approved dashboard origin."""
+        return self.origin_allowed(origin, environ.get("HTTP_HOST"))
 
     def http_route(self, path: str, **kwargs) -> Callable:
         """Register a HTTP route."""
@@ -197,15 +260,20 @@ class BaseWebServer:
         """Register base SocketIO events."""
 
         @self.m_sio.event
-        async def connect(sid: str, _environ: Dict[str, Any]) -> None:
+        async def connect(sid: str, _environ: Dict[str, Any]) -> Optional[bool]:
             """
             Handle client connection event.
 
             Args:
                 sid (str): Session ID of the connected client.
             """
+            connected = self.m_sio.manager.rooms.get("/", {}).get(None, {})
+            if len(connected) >= 64:
+                self.m_stats.track_event("__SOCKET_IN_INVALID__", "connection-limit")
+                return False
             self.m_stats.track_event("__SOCKET_IN__", "__CONNECT__")
             self.m_logger.debug("Client connected: %s", sid)
+            return None
 
         @self.m_sio.event
         async def disconnect(sid: str) -> None:

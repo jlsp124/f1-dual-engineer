@@ -40,6 +40,8 @@ class DriverRaceControlManager:
         messages (List[RaceControlMessage]): References to messages involving this driver.
     """
 
+    MAX_MESSAGES = 1024
+
     def __init__(self, driver_index: int) -> None:
         self.driver_index: int = driver_index
         self.messages: List[RaceCtrlMsgBase] = []
@@ -54,6 +56,8 @@ class DriverRaceControlManager:
                             If true, the message will be added to the session manager as well.
         """
         self.messages.append(message)
+        if len(self.messages) > self.MAX_MESSAGES:
+            del self.messages[:-self.MAX_MESSAGES]
         if propagate:
             assert self.session_mgr
             self.session_mgr.add_message(message, is_propagated=True)

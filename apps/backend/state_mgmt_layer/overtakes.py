@@ -62,6 +62,8 @@ class OvertakesHistory:
     """Class representing the history of all overtakes
     """
 
+    MAX_RECORDS = 2048
+
     def __init__(self, logger: Optional[Logger] = None):
         """Initialise the overtakes history tracker
 
@@ -71,6 +73,7 @@ class OvertakesHistory:
 
         self.m_overtakes_history: List[OvertakeRecord] = []
         self.m_logger = logger
+        self._next_row_id = 0
 
     def insert(self, overtake_record: OvertakeRecord) -> None:
         """Insert the overtake into the history table
@@ -79,20 +82,22 @@ class OvertakesHistory:
             overtake_record (OvertakeRecord): The overtake object
         """
 
-        if len(self.m_overtakes_history) == 0:
-            overtake_record.m_row_id = 0
-            self.m_overtakes_history.append(overtake_record)
-        elif (self.m_overtakes_history[-1] == overtake_record) and self.m_logger:
-            self.m_logger.debug("not adding repeated overtake record %s", str(overtake_record))
-        else:
-            overtake_record.m_row_id = len(self.m_overtakes_history)
-            self.m_overtakes_history.append(overtake_record)
+        if self.m_overtakes_history and self.m_overtakes_history[-1] == overtake_record:
+            if self.m_logger:
+                self.m_logger.debug("not adding repeated overtake record %s", str(overtake_record))
+            return
+        overtake_record.m_row_id = self._next_row_id
+        self._next_row_id += 1
+        self.m_overtakes_history.append(overtake_record)
+        if len(self.m_overtakes_history) > self.MAX_RECORDS:
+            del self.m_overtakes_history[:-self.MAX_RECORDS]
 
     def clear(self) -> None:
         """Clear the overtakes history tracker
         """
 
         self.m_overtakes_history.clear()
+        self._next_row_id = 0
 
     def getRecords(self) -> List[OvertakeRecord]:
         """Get the overtake records

@@ -1,3 +1,5 @@
+import os
+import time
 from pathlib import Path
 
 import pytest
@@ -106,3 +108,40 @@ async def test_session_recorder_exports_raw_structured_classification_and_analys
 def test_safe_path_component_blocks_traversal_and_windows_names():
     assert safe_path_component("../Hungary: Race") == "Hungary_Race"
     assert safe_path_component("CON") == "Session"
+
+
+@pytest.mark.asyncio
+async def test_metadata_alone_does_not_create_persistent_session(tmp_path: Path):
+    recorder = SessionRecorder(EngineerSettings(export_directory=str(tmp_path)))
+    recorder.start()
+    assert recorder.update_metadata(999, {"track": "Candidate"})
+    await recorder.queue.join()
+    assert recorder.database.list_sessions() == []
+    assert not tuple(tmp_path.glob(".recording_*"))
+    await recorder.stop()
+
+
+def test_retention_deletes_only_cataloged_finalized_session(tmp_path: Path):
+    settings = EngineerSettings(export_directory=str(tmp_path), retention_days=1)
+    recorder = SessionRecorder(settings)
+    cataloged = tmp_path / "Cataloged_Race"
+    uncataloged = tmp_path / "Personal_Data"
+    for folder in (cataloged, uncataloged):
+        folder.mkdir()
+        (folder / "data.txt").write_text("keep boundaries explicit", encoding="utf-8")
+        old = time.time() - (3 * 86400)
+        os.utime(folder, (old, old))
+    recorder.database.finalize_session(123, cataloged, {"track": "Cataloged"})
+
+    recorder._apply_retention()  # pylint: disable=protected-access
+
+    assert not cataloged.exists()
+    assert uncataloged.is_dir()
+
+
+def test_global_storage_quota_refuses_additional_writes(tmp_path: Path):
+    settings = EngineerSettings(export_directory=str(tmp_path), max_export_storage_gb=1)
+    recorder = SessionRecorder(settings)
+    recorder._owned_storage_bytes = 1024**3  # pylint: disable=protected-access
+    assert not recorder._storage_budget_available(1)  # pylint: disable=protected-access
+    assert recorder.storage_quota_rejections == 1

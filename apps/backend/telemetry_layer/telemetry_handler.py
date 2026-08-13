@@ -25,6 +25,8 @@ SOFTWARE.
 # -------------------------------------- IMPORTS -----------------------------------------------------------------------
 
 import asyncio
+import time
+from collections import deque
 from dataclasses import dataclass
 from datetime import datetime
 from typing import (Any, Awaitable, Callable, Coroutine, Dict, List, Optional,
@@ -120,6 +122,7 @@ def setupTelemetryTask(
         logger (PngLogger): Logger instance
         ver_str (str): Version string
         tasks (List[asyncio.Task]): List of tasks to be executed
+        dual_engineer_service (DualEngineerService): Dual-driver runtime coordinator
 
     Returns:
         F1TelemetryHandler: Telemetry handler server
@@ -170,6 +173,7 @@ class F1TelemetryHandler:
             - udp_tyre_delta_action_code (Optional[int]): UDP tyre delta action code
             - replay_server: bool: If true, init in replay mode (TCP). Else init in live mode (UDP)
             - ver_str (str): Version string
+            - dual_engineer_service: Optional dual-driver runtime coordinator
         """
         transport = telemetry_transport_factory(
             settings.Network.telemetry_port, replay_server, logger
@@ -184,6 +188,7 @@ class F1TelemetryHandler:
         self.m_dual_engineer_service = dual_engineer_service
 
         self.m_last_session_uid: Optional[int] = None
+        self.m_session_uid_transitions = deque()
         self.m_data_cleared_this_session: bool = False
         self.m_final_classification_processed: bool = False
         self.m_capture_settings: CaptureSettings = settings.Capture
@@ -355,6 +360,8 @@ class F1TelemetryHandler:
                 packet (PacketSessionData): The session data telemetry packet.
             """
 
+            if not self._allow_session_uid_transition(packet.m_header.m_sessionUID):
+                return
             self._kick_periodic_packet_timer()
             if packet.m_sessionDuration == 0:
                 self.m_logger.info("Session duration is 0. clearing data structures. UID %d",
@@ -458,6 +465,14 @@ class F1TelemetryHandler:
             # But for the purposes of auto hiding menu, lets not treat it as periodic
             if self.m_final_classification_processed:
                 self.m_logger.debug('Session UID %d final classification already processed.', packet.m_header.m_sessionUID)
+                return
+            active_uid = self.m_session_state_ref.m_session_info.m_session_uid
+            if active_uid != packet.m_header.m_sessionUID:
+                self.m_logger.warning(
+                    "Ignoring final classification for UID %d while active UID is %s",
+                    packet.m_header.m_sessionUID,
+                    active_uid,
+                )
                 return
             if not self.m_session_state_ref.m_session_info.is_valid:
                 self.m_logger.error('Final classification event. Session data not available. Not saving data.')
@@ -593,6 +608,8 @@ class F1TelemetryHandler:
                 packet (PacketEventData): The parsed object containing the session start packet's contents.
             """
 
+            if not self._allow_session_uid_transition(packet.m_header.m_sessionUID):
+                return
             self._handleSuspiciousSessionStart(packet.m_header.m_sessionUID)
             self.m_last_session_uid = packet.m_header.m_sessionUID
             self.clearAllDataStructures(f"SESSION_START event - UID {packet.m_header.m_sessionUID}")
@@ -936,6 +953,25 @@ class F1TelemetryHandler:
             self.m_udp_action_stats.track_event('__UDP_ACTIONS__', name)
             self.m_logger.silent('UDP action %d pressed - %s', code, name)
             await coro()
+
+    def _allow_session_uid_transition(self, session_uid: int) -> bool:
+        """Bound persistent session churn caused by unauthenticated UDP traffic."""
+        active_uid = self.m_session_state_ref.m_session_info.m_session_uid
+        if active_uid in (None, 0, session_uid):
+            return True
+        now = time.monotonic()
+        while self.m_session_uid_transitions and now - self.m_session_uid_transitions[0] > 3600:
+            self.m_session_uid_transitions.popleft()
+        recent_minute = sum(now - transition <= 60 for transition in self.m_session_uid_transitions)
+        if len(self.m_session_uid_transitions) >= 12 or recent_minute >= 4:
+            self.m_logger.warning(
+                "Ignoring excessive session UID transition from %s to %s",
+                active_uid,
+                session_uid,
+            )
+            return False
+        self.m_session_uid_transitions.append(now)
+        return True
 
     def _handleSuspiciousSessionStart(self, session_uid: int) -> None:
         """Save data just in case when a suspicious session start event is received.
