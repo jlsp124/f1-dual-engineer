@@ -1,9 +1,12 @@
 import struct
 import zlib
+from collections import deque
 from pathlib import Path
+from unittest.mock import Mock
 
 import pytest
 
+from apps.backend.telemetry_layer.telemetry_handler import F1TelemetryHandler
 from lib.dual_engineer.models import TelemetrySample, csv_safe_value
 from lib.dual_engineer.recorder import StreamingPacketCaptureWriter
 from lib.packet_cap import F1PktCapFileHeader, F1PktCapMessage, ZlibCompressionHelper
@@ -49,3 +52,19 @@ def test_telemetry_sample_csv_row_neutralizes_driver_name():
         lap_time_ms=1.0,
     )
     assert sample.to_row()["driver_name"].startswith("'")
+
+
+def test_session_transition_limit_survives_state_clears(monkeypatch: pytest.MonkeyPatch):
+    handler = object.__new__(F1TelemetryHandler)
+    handler.m_transition_guard_uid = None
+    handler.m_session_uid_transitions = deque()
+    handler.m_logger = Mock()
+    monkeypatch.setattr("apps.backend.telemetry_layer.telemetry_handler.time.monotonic", lambda: 100.0)
+
+    assert handler._allow_session_uid_transition(1)
+    assert handler._allow_session_uid_transition(1)
+    assert handler._allow_session_uid_transition(2)
+    assert handler._allow_session_uid_transition(3)
+    assert handler._allow_session_uid_transition(4)
+    assert handler._allow_session_uid_transition(5)
+    assert not handler._allow_session_uid_transition(6)

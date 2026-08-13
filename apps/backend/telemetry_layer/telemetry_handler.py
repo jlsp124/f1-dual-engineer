@@ -188,6 +188,7 @@ class F1TelemetryHandler:
         self.m_dual_engineer_service = dual_engineer_service
 
         self.m_last_session_uid: Optional[int] = None
+        self.m_transition_guard_uid: Optional[int] = None
         self.m_session_uid_transitions = deque()
         self.m_data_cleared_this_session: bool = False
         self.m_final_classification_processed: bool = False
@@ -956,8 +957,12 @@ class F1TelemetryHandler:
 
     def _allow_session_uid_transition(self, session_uid: int) -> bool:
         """Bound persistent session churn caused by unauthenticated UDP traffic."""
-        active_uid = self.m_session_state_ref.m_session_info.m_session_uid
-        if active_uid in (None, 0, session_uid):
+        if session_uid <= 0:
+            return False
+        if self.m_transition_guard_uid is None:
+            self.m_transition_guard_uid = session_uid
+            return True
+        if self.m_transition_guard_uid == session_uid:
             return True
         now = time.monotonic()
         while self.m_session_uid_transitions and now - self.m_session_uid_transitions[0] > 3600:
@@ -966,11 +971,12 @@ class F1TelemetryHandler:
         if len(self.m_session_uid_transitions) >= 12 or recent_minute >= 4:
             self.m_logger.warning(
                 "Ignoring excessive session UID transition from %s to %s",
-                active_uid,
+                self.m_transition_guard_uid,
                 session_uid,
             )
             return False
         self.m_session_uid_transitions.append(now)
+        self.m_transition_guard_uid = session_uid
         return True
 
     def _handleSuspiciousSessionStart(self, session_uid: int) -> None:
