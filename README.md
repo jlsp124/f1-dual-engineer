@@ -2,7 +2,9 @@
 
 **A local-first dual-driver pit wall, lap-comparison coach, and career companion for EA Sports F1 25.**
 
-[Download F1 Dual Engineer v0.1.0 for Windows](https://github.com/jlsp124/f1-dual-engineer/releases/tag/v0.1.0) · [Setup guide](docs/RUNNING.md) · [Data formats](docs/DATA_FORMATS.md)
+[Download F1 Dual Engineer v0.1.1 for Windows](https://github.com/jlsp124/f1-dual-engineer/releases/tag/v0.1.1) · [Setup guide](docs/RUNNING.md) · [Data formats](docs/DATA_FORMATS.md)
+
+v0.1.1 is a focused Windows startup hotfix: mutable runtime files now live under `%LOCALAPPDATA%\f1_dual_engineer\`, independent of the folder used to launch the executable.
 
 ![F1 Dual Engineer live pit wall using clearly labelled demo data](docs/assets/f1-dual-engineer-pitwall-demo.png)
 
@@ -31,8 +33,8 @@ The independent v0.1.0 release targets **F1 25 using UDP Format 2025**. Older ga
 
 ## Windows installation
 
-1. Download `f1_dual_engineer_0.1.0.exe` from the [v0.1.0 release](https://github.com/jlsp124/f1-dual-engineer/releases/tag/v0.1.0).
-2. Keep it in a writable folder and launch it. The launcher starts the telemetry backend and opens `http://127.0.0.1:4768/`.
+1. Download `f1_dual_engineer_0.1.1.exe` from the [v0.1.1 release](https://github.com/jlsp124/f1-dual-engineer/releases/tag/v0.1.1).
+2. Launch it from any folder. The launcher starts the telemetry backend and opens `http://127.0.0.1:4768/`. Logs, settings, databases, automatic captures, and the default exports directory are stored under `%LOCALAPPDATA%\f1_dual_engineer\`.
 3. Windows may show a SmartScreen warning because the community binary is not code-signed. Verify the published SHA-256 checksum, then use Windows' normal **More info → Run anyway** flow only if you trust this repository. No security protection is disabled.
 4. In the launcher settings, open **Engineer** to configure preferred drivers, export directory, retention, structured sample rate, and alert categories.
 
@@ -67,7 +69,7 @@ Append `?demo=1` to the dashboard URL or press **D** to enable representative de
 
 ## Session exports and privacy
 
-The default `exports/` directory contains one folder per session and `f1_dual_engineer.sqlite`. A finalized folder contains:
+On Windows, the default `%LOCALAPPDATA%\f1_dual_engineer\exports\` directory contains one folder per session and `f1_dual_engineer.sqlite`. A finalized folder contains:
 
 ```text
 Hungaroring_2026-08-12_Race/
@@ -113,7 +115,7 @@ Build the standalone app with:
 py -3.13 -m poetry run python scripts/build.py
 ```
 
-The output is `dist/f1_dual_engineer_0.1.0.exe`. Detailed instructions are in [RUNNING.md](docs/RUNNING.md), [BUILDING.md](docs/BUILDING.md), and [TESTING.md](docs/TESTING.md).
+The output is `dist/f1_dual_engineer_0.1.1.exe`. Detailed instructions are in [RUNNING.md](docs/RUNNING.md), [BUILDING.md](docs/BUILDING.md), and [TESTING.md](docs/TESTING.md).
 
 ## Known limitations
 

@@ -35,7 +35,7 @@ from apps.save_viewer.save_web_server import init_server_task
 from lib.child_proc_mgmt import report_pid_from_child
 from lib.config import load_config_from_json
 from lib.error_status import PngError
-from lib.file_path import get_app_base_dir
+from lib.file_path import get_app_base_dir, resolve_user_file
 from lib.logger import get_logger
 from lib.version import get_version
 from meta.meta import APP_NAME
@@ -53,7 +53,8 @@ def parseArgs() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=f"{APP_NAME} save data viewer")
 
     # Add command-line arguments with default values
-    parser.add_argument("--config-file", nargs="?", default="png_config.json", help="Configuration file name (optional)")
+    default_config = resolve_user_file("png_config.json") if sys.platform == "win32" else "png_config.json"
+    parser.add_argument("--config-file", nargs="?", default=default_config, help="Configuration file name (optional)")
     parser.add_argument("--debug", action="store_true", help="Enable debug mode")
 
     # Parse the command-line arguments

@@ -42,6 +42,7 @@ from lib.child_proc_mgmt import report_pid_from_child
 from lib.config import load_config_from_json
 from lib.error_status import PngError
 from lib.dual_engineer.service import DualEngineerService
+from lib.file_path import resolve_user_file
 from lib.inter_task_communicator import AsyncInterTaskCommunicator
 from lib.ipc import IpcDealerAsync, IpcPublisherAsync
 from lib.logger import get_logger
@@ -237,7 +238,8 @@ def parseArgs() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=f"{APP_NAME} Realtime Telemetry Server")
 
     # Add command-line arguments with default values
-    parser.add_argument("--config-file", nargs="?", default="png_config.json", help="Configuration file name (optional)")
+    default_config = resolve_user_file("png_config.json") if sys.platform == "win32" else "png_config.json"
+    parser.add_argument("--config-file", nargs="?", default=default_config, help="Configuration file name (optional)")
     parser.add_argument("--debug", action="store_true", help="Enable debug mode")
     parser.add_argument('--replay-server', action='store_true', help="Enable the TCP replay debug server")
     parser.add_argument('--log-file-name', type=str, default=None, help="Log file name")

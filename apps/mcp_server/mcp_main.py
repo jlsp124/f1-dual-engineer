@@ -33,6 +33,7 @@ from lib.child_proc_mgmt import (notify_parent_init_complete,
                                  report_pid_from_child)
 from lib.config import PngSettings, load_config_from_json
 from lib.error_status import PngError
+from lib.file_path import resolve_user_file
 from lib.ipc import IpcDealerAsync, PngAppId
 from lib.logger import get_logger
 from lib.version import get_version
@@ -53,12 +54,24 @@ def parseArgs() -> argparse.Namespace:
 
     # Initialize the ArgumentParser
     parser = argparse.ArgumentParser(description=f"{APP_NAME} MCP server")
+    default_config = resolve_user_file("png_config.json") if sys.platform == "win32" else "png_config.json"
+    default_log_file = resolve_user_file("png_mcp_stdio.log") if sys.platform == "win32" else "png_mcp_stdio.log"
 
     # Add command-line arguments with default values
-    parser.add_argument("--config-file", nargs="?", default="png_config.json", help="Configuration file name (optional)")
+    parser.add_argument(
+        "--config-file",
+        nargs="?",
+        default=default_config,
+        help="Configuration file name (optional)",
+    )
     parser.add_argument("--debug", action="store_true", help="Enable debug mode")
     parser.add_argument("--managed", action="store_true", help="Indicates if process is managed by parent")
-    parser.add_argument("--log-file", type=str, default="png_mcp_stdio.log", help="Log file name")
+    parser.add_argument(
+        "--log-file",
+        type=str,
+        default=default_log_file,
+        help="Log file name",
+    )
     parser.add_argument("--wd", type=str, default=None, help="Working directory")
 
     # Parse the command-line arguments

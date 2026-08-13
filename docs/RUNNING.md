@@ -2,7 +2,9 @@
 
 ## Standalone Windows release
 
-Download `f1_dual_engineer_0.1.0.exe` from the GitHub release and run it from a writable folder. The launcher manages the telemetry backend, HUD, save viewer, broker, and other inherited tools. Start **Telemetry Backend**; the dual-driver dashboard opens at `http://127.0.0.1:4768/`.
+Download `f1_dual_engineer_0.1.1.exe` from the GitHub release and launch it from any folder. The launcher manages the telemetry backend, HUD, save viewer, broker, and other inherited tools. Start **Telemetry Backend**; the dual-driver dashboard opens at `http://127.0.0.1:4768/`.
+
+On Windows, logs, settings, databases, automatic captures, crash diagnostics, lock state, and the default exports directory are stored under `%LOCALAPPDATA%\f1_dual_engineer\`. A user-selected absolute export directory is preserved.
 
 The binary is not code-signed. Windows SmartScreen may require the normal **More info → Run anyway** confirmation. Compare the file's SHA-256 digest with the release checksum before accepting that warning.
 

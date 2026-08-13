@@ -20,10 +20,13 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
+import sys
 from pathlib import Path
 from typing import Any, ClassVar, Dict
 
 from pydantic import BaseModel, Field, field_validator, model_validator
+
+from lib.file_path import get_app_base_dir
 
 from .diff import ConfigDiffMixin
 
@@ -163,7 +166,10 @@ class EngineerSettings(ConfigDiffMixin, BaseModel):
 
     @property
     def export_directory_path(self) -> Path:
-        return Path(self.export_directory).expanduser().resolve(strict=False)
+        path = Path(self.export_directory).expanduser()
+        if sys.platform == "win32" and not path.is_absolute():
+            path = get_app_base_dir() / path
+        return path.resolve(strict=False)
 
     @property
     def sample_interval_seconds(self) -> float:
