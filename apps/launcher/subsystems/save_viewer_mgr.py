@@ -73,7 +73,7 @@ class SaveViewerAppMgr(PngAppMgrBase):
             title="HTTP port in use",
             message="The HTTP port is already in use by another process. Please close the other process and try again or change the port",
             can_restart=False,
-            settings_field='Network -> "Pits n\' Giggles Save Data Viewer Port"'
+            settings_field='Network -> "F1 Dual Engineer Save Data Viewer Port"'
         ))
 
     def get_buttons(self) -> List[QPushButton]:

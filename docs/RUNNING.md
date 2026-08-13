@@ -1,99 +1,56 @@
-# 🚀 Running pits-n-giggles (Manually)
+# Running F1 Dual Engineer
 
-This project uses Python 3.12 or 3.13 and is structured as a suite of apps under the `apps/` directory. Each sub-app can be run independently using Python's `-m` module mode.
+## Standalone Windows release
 
-## 🧰 Requirements
+Download `f1_dual_engineer_0.1.0.exe` from the GitHub release and run it from a writable folder. The launcher manages the telemetry backend, HUD, save viewer, broker, and other inherited tools. Start **Telemetry Backend**; the dual-driver dashboard opens at `http://127.0.0.1:4768/`.
 
-- Python 3.12 or 3.13 installed and available in your `PATH`
-- [Poetry](https://python-poetry.org/) installed (preferred for dependency management)
+The binary is not code-signed. Windows SmartScreen may require the normal **More info → Run anyway** confirmation. Compare the file's SHA-256 digest with the release checksum before accepting that warning.
 
-## 📦 Install Dependencies
+## F1 25 / console setup
 
-Install only the production dependencies if you plan on running only the app and none of the tests
-```bash
-poetry install --without dev
+The game and app do not need to share a computer. In F1 25 telemetry settings:
+
+1. Set **UDP Telemetry** to On.
+2. Set **UDP IP Address** to the engineer laptop's LAN IPv4 address. Run `ipconfig` on that laptop and use the active Wi-Fi/Ethernet adapter's IPv4 address.
+3. Set **UDP Port** to `20777` unless you changed **Network → F1 UDP Telemetry Port**.
+4. Set **UDP Send Rate** to 60 Hz.
+5. Set **UDP Format** to 2025.
+6. Enable names/show UDP data where offered.
+7. Set **Your Telemetry** to Public for remote players whose detailed inputs, tyres, fuel, ERS, and damage should be available.
+
+Permit inbound UDP on that port through Windows Firewall for private networks. Do not expose the HTTP dashboard to the internet.
+
+## First use
+
+- **Network:** `127.0.0.1` is the safe dashboard default. UDP still accepts console/PC telemetry on the configured port. Use `0.0.0.0` only to intentionally let trusted LAN devices open the dashboard.
+- **Engineer:** automatic recording is on, structured sampling defaults to 20 Hz, `exports` is the default output folder, retention is unlimited (`0` days), and all alert categories are enabled.
+- **Driver selection:** select two different participants on Dual Pit Wall and click **Pin Drivers**. Stored names are used to restore the pair when possible.
+- **Privacy:** restricted remote detail is displayed as `Unavailable`. It is not reconstructed or guessed.
+
+Use `http://127.0.0.1:4768/?demo=1` to inspect the complete interface without game telemetry. The orange `DEMO DATA` badge remains visible throughout.
+
+## Development run
+
+From the repository root on Windows:
+
+```powershell
+git submodule update --init --recursive
+py -3.13 -m pip install poetry==2.2.1
+py -3.13 -m poetry install --no-interaction --no-root
+py -3.13 -m poetry run python -m apps.launcher
 ```
 
-If you plan on running app, dev utils and unit tests, install all dependencies
-```bash
-poetry install
+Run the backend without the launcher:
+
+```powershell
+py -3.13 -m poetry run python -m apps.backend
 ```
 
-This sets up a virtual environment and installs everything defined in `pyproject.toml`.
+Replay an existing `.f1pcap` during development:
 
----
-
-## ▶️ Running Apps
-
-The app can be launched by using the command
-
-```bash
-poetry run python -m apps.launcher
+```powershell
+py -3.13 -m poetry run python -m apps.backend --replay-server
+py -3.13 -m poetry run python -m apps.dev_tools.telemetry_replayer --file-name path\to\capture.f1pcap
 ```
 
-All commands below must be run **from the project root directory** (i.e., the folder containing `pyproject.toml`).
-
-### 🧠 Backend App
-
-```bash
-poetry run python -m apps.backend --replay-server
-```
-
-Note:
-The --replay-server flag enables the replay mode for the backend,
-allowing the server to process pre-recorded events for debugging and testing.
-Without this flag, the server will run in normal mode. For example, to run
-in default mode, use:
-
-```bash
-poetry run python -m apps.backend
-```
-
-### 🛠 Dev Tools (e.g., telemetry replayer)
-
-```bash
-poetry run python -m apps.dev_tools.telemetry_replayer --file-name example.f1pcap
-```
-
----
-
-## ❗ Notes
-
-- Do **not** include `.py` in module paths.
-- Use dot (`.`) separators for nested module paths.
-- You **must** be in the project root (`pits-n-giggles/`) when running these commands.
-- All directories under `apps/` should **avoid hyphens** (`-`). Use underscores or camelCase instead to remain Python-compatible.
-
----
-
-## 🔒 Network Bind Address
-
-By default, the web dashboards bind to `127.0.0.1`, so only the engineer laptop can open them. The F1 UDP listener still listens on the configured telemetry port on all interfaces, allowing a console or another PC on the LAN to send telemetry to the laptop.
-
-To intentionally allow another trusted LAN device to open the dashboards, set `bind_address` to `"0.0.0.0"` in your `png_config.json`:
-
-```json
-{
-  "Network": {
-    "bind_address": "0.0.0.0"
-  }
-}
-```
-
-> **Security Warning:** When `bind_address` is `0.0.0.0`, the HTTP dashboards are reachable by anyone on your network. Do not use this setting on untrusted networks. Never expose the dashboard port directly to the public internet.
-
----
-
-## 🧼 Cleaning Up
-
-To remove the virtual environment created by Poetry:
-
-```bash
-poetry env remove python
-```
-
-To reinstall everything clean:
-
-```bash
-poetry install --no-root
-```
+All commands must run from the project root.

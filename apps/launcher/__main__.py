@@ -40,8 +40,8 @@ def _dispatch_frozen_submodule():
     with their own entry points.
 
     Example invocations:
-        pits_n_giggles.exe --module apps.backend <...>
-        pits_n_giggles.exe --module apps.save_viewer <...>
+        f1_dual_engineer.exe --module apps.backend <...>
+        f1_dual_engineer.exe --module apps.save_viewer <...>
     """
 
     ALLOWED_MODULES = {

@@ -87,6 +87,7 @@ def initUiIntfLayer(
         run_ipc_server (bool): Whether to run the IPC server
         shutdown_event (asyncio.Event): Event to signal shutdown
         telemetry_handler (F1TelemetryHandler): Telemetry handler
+        dual_engineer_service (DualEngineerService): Dual-driver runtime coordinator
 
     Returns:
         Tuple[TelemetryWebServer, IpcPublisherAsync, IpcDealerAsync]: Web server, IPC publisher,

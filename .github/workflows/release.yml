@@ -1,156 +1,33 @@
-# Release Pipeline — Pits n' Giggles
-#
-# USAGE
-# -----
-# 1. Create a draft GitHub Release with the correct tag and release notes.
-# 2. Run this workflow manually from the Actions tab (no inputs required).
-#
-# The workflow will:
-#   - Auto-detect the single existing draft release (fails loudly if 0 or >1).
-#   - Check out the exact tagged commit.
-#   - Verify meta/meta.py version matches the release tag (safety guard).
-#   - Build Windows (.exe) and macOS (.zip of .app) artifacts in parallel.
-#   - Run smoke tests on both platforms.
-#   - Generate SHA256 checksums for all artifacts.
-#   - Wipe any existing assets from the draft release (idempotent re-runs).
-#   - Upload all artifacts + checksums.txt to the draft release.
-#   - Upload the binaries themselves to VirusTotal for a full multi-engine file
-#     scan; fail if any engine outside KNOWN_FP_ENGINES flags them (see the
-#     virustotal job for why the gate isn't a plain detection count).
-#   - Append a VirusTotal results section to the release notes (idempotent —
-#     a rerun replaces the section rather than duplicating it). The rest of
-#     the release notes is left untouched.
-#   - Publish the draft release automatically once the scan is clean.
-#   - Dispatch discord-release.yml to post the announcement (the publish step's
-#     own release-published event can't trigger it — GitHub doesn't let the
-#     default GITHUB_TOKEN chain into other workflows; workflow_dispatch is
-#     exempt from that restriction, so we call it directly instead).
-#
-# PERMISSIONS REQUIRED
-# --------------------
-# Requires "Read and write permissions" for the built-in GITHUB_TOKEN:
-#   Settings → Actions → General → Workflow permissions → Read and write permissions
-# This grants both `contents: write` (releases/tags) and `actions: write`
-# (needed to dispatch discord-release.yml), both declared below.
-#
-# Also requires a VT_API_KEY repo secret (Settings → Secrets and variables →
-# Actions → New repository secret) for the VirusTotal scan step. Get a free
-# key by creating an account at virustotal.com and copying it from your
-# account's API Key page. The free tier (500 scans/day, 4 req/min) is
-# sufficient for this release cadence.
-
-name: Release
+name: Windows Release
 
 on:
   workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
 
 permissions:
   contents: write
-  actions: write
-
-# ─────────────────────────────────────────────────────────────────────────────
 
 jobs:
-
-  # ───────────────────────────────────────────────────────────────────────────
-  # 1. Locate the single existing draft release — no version input needed.
-  # ───────────────────────────────────────────────────────────────────────────
-  find-release:
-    name: Find draft release
-    runs-on: ubuntu-latest
-    outputs:
-      tag:        ${{ steps.draft.outputs.tag }}
-      release_id: ${{ steps.draft.outputs.release_id }}
-      name:       ${{ steps.draft.outputs.name }}
-
-    steps:
-      - name: Locate draft release via GitHub API
-        id: draft
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          RELEASES=$(gh api "repos/$GITHUB_REPOSITORY/releases" \
-            --jq '[.[] | select(.draft == true)]')
-
-          COUNT=$(echo "$RELEASES" | jq 'length')
-
-          if [[ "$COUNT" -eq 0 ]]; then
-            echo "::error::No draft release found. Create one in GitHub first."
-            exit 1
-          elif [[ "$COUNT" -gt 1 ]]; then
-            echo "::error::$COUNT draft releases found. Delete or publish the extras before running."
-            echo "$RELEASES" | jq -r '.[].tag_name' | while read -r t; do echo "  - $t"; done
-            exit 1
-          fi
-
-          TAG=$(echo "$RELEASES" | jq -r '.[0].tag_name')
-          ID=$(echo  "$RELEASES" | jq -r '.[0].id')
-          NAME=$(echo "$RELEASES" | jq -r '.[0].name')
-
-          echo "tag=$TAG"        >> "$GITHUB_OUTPUT"
-          echo "release_id=$ID"  >> "$GITHUB_OUTPUT"
-          {
-            echo "name<<VT_NAME_EOF"
-            echo "$NAME"
-            echo "VT_NAME_EOF"
-          } >> "$GITHUB_OUTPUT"
-          echo "Targeting draft release: $TAG (id=$ID)"
-
-  # ───────────────────────────────────────────────────────────────────────────
-  # 2. Build on Windows and macOS in parallel.
-  # ───────────────────────────────────────────────────────────────────────────
-  build:
-    name: Build (${{ matrix.os }})
-    needs: find-release
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: true
-      matrix:
-        os: [windows-latest, macos-latest]
+  build-test-release:
+    runs-on: windows-latest
     env:
       POETRY_VERSION: 2.2.1
 
     steps:
-      - name: Checkout tagged commit
+      - name: Checkout repository and viewer submodule
         uses: actions/checkout@v5
         with:
-          ref: ${{ needs.find-release.outputs.tag }}
           submodules: recursive
 
-      # Safety guard: code version must match the release tag.
-      - name: Verify meta/meta.py version matches tag
-        run: |
-          META_VER=$(python -c "import sys; sys.path.insert(0, '.'); from meta.meta import APP_VERSION; print(APP_VERSION)")
-          TAG_VER="${{ needs.find-release.outputs.tag }}"
-          TAG_VER="${TAG_VER#v}"    # strip leading 'v'  (e.g. v4.2.0 → 4.2.0)
-          TAG_VER="${TAG_VER#*/}"  # strip prefix/      (e.g. beta/4.2.0 → 4.2.0)
-          if [[ "$META_VER" != "$TAG_VER" ]]; then
-            echo "::error::meta/meta.py has version $META_VER but release tag is ${{ needs.find-release.outputs.tag }}"
-            echo "::error::Update meta/meta.py before creating the draft release."
-            exit 1
-          fi
-          echo "Version check passed: $META_VER == $TAG_VER"
-        shell: bash
-
-      - name: Set up Python 3.12
+      - name: Set up Python
         uses: actions/setup-python@v6
         with:
-          python-version: '3.12'
+          python-version: '3.13'
 
       - name: Install Poetry
-        run: |
-          python -m pip install --upgrade pip
-          curl -sSL https://install.python-poetry.org | python -
-          if [ "$RUNNER_OS" = "Windows" ]; then
-            echo "$APPDATA\Python\Scripts" >> $GITHUB_PATH
-          else
-            echo "$HOME/.local/bin" >> $GITHUB_PATH
-          fi
-        shell: bash
-
-      - name: Install dependencies
-        run: poetry install --no-root --without dev
-        shell: bash
+        run: python -m pip install "poetry==$env:POETRY_VERSION"
 
       - name: Set up Node.js
         uses: actions/setup-node@v5
@@ -162,435 +39,45 @@ jobs:
         with:
           version: '10'
 
-      - name: Build with PyInstaller
-        run: poetry run python scripts/build.py
-        shell: bash
+      - name: Install dependencies
+        run: python -m poetry install --no-interaction --no-root
 
-      - name: Smoke test
+      - name: Run deterministic test suite
+        run: python -m poetry run pytest tests/ -q
+
+      - name: Build standalone executable
+        run: python -m poetry run python scripts/build.py
+
+      - name: Smoke-test frozen launcher
+        shell: pwsh
         run: |
-          if [[ "$RUNNER_OS" == "macOS" ]]; then
-            APP_PATH=$(find dist -name "*.app" | head -n 1)
-            TEST_FILE="$HOME/Library/Application Support/pits_n_giggles/png_smoke_test.txt"
-            open -W "$APP_PATH" --args --smoke-test "hello-smoke"
-            if [ ! -f "$TEST_FILE" ]; then
-              echo "Smoke test failed: $TEST_FILE not found"
-              exit 1
-            fi
-          else
-            EXE_PATH=$(find dist -name "*.exe" | head -n 1)
-            TEST_FILE="./png_smoke_test.txt"
-            "$EXE_PATH" --smoke-test "hello-smoke"
-            TIMEOUT=10; ELAPSED=0; INTERVAL=0.5
-            while [ ! -f "$TEST_FILE" ] && (( $(echo "$ELAPSED < $TIMEOUT" | bc -l) )); do
-              sleep $INTERVAL
-              ELAPSED=$(echo "$ELAPSED + $INTERVAL" | bc)
-            done
-            if [ ! -f "$TEST_FILE" ]; then
-              echo "Smoke test failed: $TEST_FILE not found after ${TIMEOUT}s"
-              exit 1
-            fi
-          fi
-          echo "Smoke test passed!"
-        shell: bash
+          $exe = Get-Item "dist\f1_dual_engineer_*.exe"
+          & $exe.FullName --smoke-test hello-smoke
+          if ((Get-Content "f1_dual_engineer_smoke_test.txt" -Raw) -ne "hello-smoke") {
+            throw "Frozen launcher smoke marker was not written correctly"
+          }
 
-      - name: Prepare artifact
-        id: prep
+      - name: Generate checksum
+        shell: pwsh
         run: |
-          if [[ "$RUNNER_OS" == "macOS" ]]; then
-            APP=$(find dist -name "*.app" | head -n 1)
-            BASENAME=$(basename "$APP" .app)
-            ZIP_NAME="${BASENAME}-mac.zip"
-            (cd dist && zip -r "$ZIP_NAME" "$(basename "$APP")")
-            echo "path=dist/${ZIP_NAME}" >> "$GITHUB_OUTPUT"
-            echo "name=${ZIP_NAME}"      >> "$GITHUB_OUTPUT"
-          else
-            EXE=$(find dist -name "*.exe" | head -n 1)
-            echo "path=${EXE}"                  >> "$GITHUB_OUTPUT"
-            echo "name=$(basename "${EXE}")" >> "$GITHUB_OUTPUT"
-          fi
-        shell: bash
+          $exe = Get-Item "dist\f1_dual_engineer_*.exe"
+          $hash = (Get-FileHash $exe.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  $($exe.Name)" | Set-Content "dist\checksums.txt" -Encoding ascii
 
-      - name: Upload build artifact
+      - name: Upload workflow artifact
         uses: actions/upload-artifact@v5
         with:
-          name: ${{ steps.prep.outputs.name }}
-          path: ${{ steps.prep.outputs.path }}
-          if-no-files-found: error
-          retention-days: 1
+          name: f1-dual-engineer-windows
+          path: |
+            dist/f1_dual_engineer_*.exe
+            dist/checksums.txt
 
-  # ───────────────────────────────────────────────────────────────────────────
-  # 3. Collect artifacts, checksum, wipe old assets, upload to draft release.
-  # ───────────────────────────────────────────────────────────────────────────
-  upload-assets:
-    name: Upload assets to draft release
-    needs: [find-release, build]
-    runs-on: ubuntu-latest
-    env:
-      GH_TOKEN:    ${{ secrets.GITHUB_TOKEN }}
-      RELEASE_TAG: ${{ needs.find-release.outputs.tag }}
-      RELEASE_ID:  ${{ needs.find-release.outputs.release_id }}
-
-    steps:
-      - name: Download all build artifacts
-        uses: actions/download-artifact@v5
+      - name: Attach files to tagged release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
         with:
-          path: release-assets
-          merge-multiple: true   # flattens subdirs → single directory
-
-      - name: List downloaded files
-        run: ls -lh release-assets/
-
-      - name: Generate SHA256 checksums
-        run: |
-          cd release-assets
-          find . -maxdepth 1 -type f | sort | xargs sha256sum \
-            | sed 's|\./||' > checksums.txt
-          echo "=== checksums.txt ==="
-          cat checksums.txt
-
-      # Delete every existing asset on the draft release so re-runs are clean.
-      - name: Wipe existing release assets
-        run: |
-          ASSET_IDS=$(gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets" \
-            --jq '.[].id')
-          if [[ -z "$ASSET_IDS" ]]; then
-            echo "No existing assets to delete."
-          else
-            for ASSET_ID in $ASSET_IDS; do
-              echo "Deleting asset id=$ASSET_ID"
-              gh api "repos/$GITHUB_REPOSITORY/releases/assets/$ASSET_ID" -X DELETE
-            done
-          fi
-
-      - name: Upload artifacts to draft release
-        run: |
-          cd release-assets
-          for FILE in $(find . -maxdepth 1 -type f | sort); do
-            echo "Uploading: $(basename "$FILE")"
-            gh release upload "$RELEASE_TAG" "$FILE" \
-              --repo "$GITHUB_REPOSITORY"
-          done
-          echo "All files uploaded to draft release $RELEASE_TAG"
-
-  # ───────────────────────────────────────────────────────────────────────────
-  # 4. Scan the release binaries with VirusTotal. The binaries are downloaded and
-  #    uploaded to VT so every engine sees the actual file bytes. Fails the job
-  #    (and blocks publish-release) when an engine outside KNOWN_FP_ENGINES flags
-  #    a binary, or when the total reaches MAX_DETECTIONS.
-  # ───────────────────────────────────────────────────────────────────────────
-  virustotal:
-    name: VirusTotal scan
-    needs: [find-release, upload-assets]
-    runs-on: ubuntu-latest
-    env:
-      GH_TOKEN:    ${{ secrets.GITHUB_TOKEN }}
-      VT_API_KEY:  ${{ secrets.VT_API_KEY }}
-      RELEASE_TAG: ${{ needs.find-release.outputs.tag }}
-      RELEASE_ID:  ${{ needs.find-release.outputs.release_id }}
-      # The gate is "did an engine we don't already expect flag this build", not a
-      # bare count. An unsigned PyInstaller onefile binary self-extracts to temp,
-      # which a handful of low-tier engines permanently read as dropper
-      # behaviour — as of v4.3.0 that's the three below, and no amount of waiting
-      # clears them. A genuine compromise would light up the majors that are
-      # clean today (Microsoft, Kaspersky, ESET), so any engine outside this list
-      # fails the job.
-      #
-      # Names are matched case- and space-insensitively, and by prefix in either
-      # direction, because VT's GUI labels don't match its API keys ("Bkav Pro"
-      # vs "Bkav", "Arctic Wolf" vs "ArcticWolf").
-      KNOWN_FP_ENGINES: "ArcticWolf,Bkav,SecureAge"
-      # Hard ceiling regardless of the list above: this many detections means
-      # something broad is going on and the release should stop no matter who
-      # reported it.
-      MAX_DETECTIONS: 6
-      # How old VirusTotal's stored verdict may be before we ask it to re-scan
-      # instead of trusting what it has.
-      MAX_VERDICT_AGE_DAYS: 14
-
-    steps:
-      - name: Check VT_API_KEY is configured
-        run: |
-          if [[ -z "$VT_API_KEY" ]]; then
-            echo "::error::VT_API_KEY secret is not set. Add it under Settings > Secrets and variables > Actions (see release.yml header for how to get a free key)."
-            exit 1
-          fi
-
-      # Assets are fetched by asset id rather than `gh release download`: the
-      # release is still a draft here, and drafts aren't addressable by tag.
-      - name: Download release binaries
-        run: |
-          set -euo pipefail
-          mkdir -p vt-assets
-
-          ASSETS=$(gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets" \
-            --jq '.[] | select(.name | endswith(".exe") or endswith("-mac.zip")) | "\(.id) \(.size) \(.name)"')
-
-          if [[ -z "$ASSETS" ]]; then
-            echo "::error::No .exe or -mac.zip assets found on draft release $RELEASE_TAG."
-            exit 1
-          fi
-
-          while read -r ASSET_ID SIZE NAME; do
-            echo "Downloading $NAME (id=$ASSET_ID, $SIZE bytes)"
-            gh api "repos/$GITHUB_REPOSITORY/releases/assets/$ASSET_ID" \
-              -H "Accept: application/octet-stream" > "vt-assets/$NAME"
-
-            # The asset endpoint 302s to storage; if that redirect were ever not
-            # followed we'd silently save a few hundred bytes of JSON and hand VT
-            # a file that isn't the release binary at all.
-            GOT=$(stat -c%s "vt-assets/$NAME")
-            if [[ "$GOT" -ne "$SIZE" ]]; then
-              echo "::error::$NAME downloaded as $GOT bytes but the release asset is $SIZE bytes."
-              exit 1
-            fi
-          done <<< "$ASSETS"
-
-          ls -lh vt-assets/
-
-      - name: Scan release binaries with VirusTotal
-        run: |
-          set -euo pipefail
-
-          : > virustotal-report.txt
-          FAILED=0
-
-          for FILE in vt-assets/*; do
-            NAME=$(basename "$FILE")
-            SHA=$(sha256sum "$FILE" | cut -d' ' -f1)
-            echo "::group::$NAME ($SHA)"
-
-            # Fast path: VT may already know this exact build — a re-run of this
-            # workflow rebuilds byte-identical artifacts often enough that
-            # re-uploading ~200 MB to relearn the same verdict is wasteful.
-            EXISTING=$(curl -sS "https://www.virustotal.com/api/v3/files/$SHA" \
-              -H "x-apikey: $VT_API_KEY" || true)
-            STORED=$(echo "$EXISTING" | jq -r '.data.attributes.last_analysis_stats.malicious // empty')
-            STORED_DATE=$(echo "$EXISTING" | jq -r '.data.attributes.last_analysis_date // empty')
-
-            # A stored verdict is only worth reusing while it's recent. Engines
-            # revise signatures constantly, so an old result can report a
-            # detection that its vendor has since retracted — or miss one added
-            # later. Re-runs of this workflow are minutes apart and stay on the
-            # fast path; anything older gets re-checked.
-            STORED_AGE_DAYS=""
-            if [[ -n "$STORED_DATE" ]]; then
-              STORED_AGE_DAYS=$(( ( $(date +%s) - STORED_DATE ) / 86400 ))
-            fi
-
-            ANALYSIS_ID=""
-            if [[ -n "$STORED" && -n "$STORED_AGE_DAYS" && "$STORED_AGE_DAYS" -le "$MAX_VERDICT_AGE_DAYS" ]]; then
-              echo "VirusTotal scanned this file ${STORED_AGE_DAYS} day(s) ago; reusing that verdict."
-              MALICIOUS="$STORED"
-              FLAGGED_LIST=$(echo "$EXISTING" | jq -r '.data.attributes.last_analysis_results // {} | to_entries[] | select(.value.category == "malicious") | .key')
-            elif [[ -n "$STORED" ]]; then
-              # VT has the bytes already, so ask it to re-run the engines rather
-              # than spending another ~200 MB upload on a file it can identify by
-              # hash.
-              echo "VirusTotal's verdict is ${STORED_AGE_DAYS:-an unknown number of} day(s) old; requesting a re-scan."
-              ANALYSIS_ID=$(curl -sS -X POST "https://www.virustotal.com/api/v3/files/$SHA/analyse" \
-                -H "x-apikey: $VT_API_KEY" | jq -r '.data.id // empty')
-
-              if [[ -z "$ANALYSIS_ID" ]]; then
-                echo "::error::Could not request a re-scan of $NAME."
-                echo "- \`$NAME\`: ⚠️ re-scan request failed" >> virustotal-report.txt
-                FAILED=1
-                echo "::endgroup::"
-                continue
-              fi
-            else
-              # Both artifacts are ~200 MB. The plain POST /files endpoint caps at
-              # 32 MB, so anything this size has to go through a one-shot upload
-              # URL obtained from /files/upload_url (good to 650 MB on the free
-              # tier).
-              UPLOAD_URL=$(curl -sS "https://www.virustotal.com/api/v3/files/upload_url" \
-                -H "x-apikey: $VT_API_KEY" | jq -r '.data // empty')
-
-              if [[ -z "$UPLOAD_URL" ]]; then
-                echo "::error::Could not obtain a VirusTotal upload URL for $NAME."
-                echo "- \`$NAME\`: ⚠️ upload URL request failed" >> virustotal-report.txt
-                FAILED=1
-                echo "::endgroup::"
-                continue
-              fi
-
-              echo "Uploading $NAME ($(du -h "$FILE" | cut -f1)) to VirusTotal..."
-              SUBMIT_RESPONSE=$(curl -sS -X POST "$UPLOAD_URL" \
-                -H "x-apikey: $VT_API_KEY" \
-                -F "file=@$FILE" || true)
-              ANALYSIS_ID=$(echo "$SUBMIT_RESPONSE" | jq -r '.data.id // empty')
-
-              if [[ -z "$ANALYSIS_ID" ]]; then
-                echo "::error::VirusTotal submission failed for $NAME: $SUBMIT_RESPONSE"
-                echo "- \`$NAME\`: ⚠️ submission failed" >> virustotal-report.txt
-                FAILED=1
-                echo "::endgroup::"
-                continue
-              fi
-            fi
-
-            # Shared by the upload and re-scan paths; skipped when a fresh stored
-            # verdict already answered the question. File analyses queue behind
-            # ~70 engines and take a lot longer than the old URL lookups did,
-            # hence the roomier budget.
-            if [[ -n "$ANALYSIS_ID" ]]; then
-              echo "Polling analysis $ANALYSIS_ID for $NAME..."
-              STATUS="queued"
-              ELAPSED=0
-              TIMEOUT=1800
-              INTERVAL=30
-              while [[ "$STATUS" != "completed" && "$ELAPSED" -lt "$TIMEOUT" ]]; do
-                sleep "$INTERVAL"
-                ELAPSED=$((ELAPSED + INTERVAL))
-                ANALYSIS=$(curl -sS "https://www.virustotal.com/api/v3/analyses/$ANALYSIS_ID" \
-                  -H "x-apikey: $VT_API_KEY" || true)
-                STATUS=$(echo "$ANALYSIS" | jq -r '.data.attributes.status // "unknown"')
-              done
-
-              if [[ "$STATUS" != "completed" ]]; then
-                echo "::error::VirusTotal analysis for $NAME did not complete within ${TIMEOUT}s."
-                echo "- \`$NAME\`: ⚠️ analysis timed out" >> virustotal-report.txt
-                FAILED=1
-                echo "::endgroup::"
-                continue
-              fi
-
-              MALICIOUS=$(echo "$ANALYSIS" | jq -r '.data.attributes.stats.malicious')
-              FLAGGED_LIST=$(echo "$ANALYSIS" | jq -r '.data.attributes.results // {} | to_entries[] | select(.value.category == "malicious") | .key')
-            fi
-
-            # Split the flagging engines into the ones we already expect and the
-            # ones we don't — the latter are what actually gate the release.
-            UNEXPECTED=""
-            while read -r HIT; do
-              [[ -z "$HIT" ]] && continue
-              HIT_NORM=$(echo "$HIT" | tr '[:upper:]' '[:lower:]' | tr -cd '[:alnum:]')
-              KNOWN=0
-              while read -r ALLOWED; do
-                [[ -z "$ALLOWED" ]] && continue
-                ALLOWED_NORM=$(echo "$ALLOWED" | tr '[:upper:]' '[:lower:]' | tr -cd '[:alnum:]')
-                if [[ "$HIT_NORM" == "$ALLOWED_NORM"* || "$ALLOWED_NORM" == "$HIT_NORM"* ]]; then
-                  KNOWN=1
-                  break
-                fi
-              done <<< "$(echo "$KNOWN_FP_ENGINES" | tr ',' '\n')"
-              if [[ "$KNOWN" -eq 0 ]]; then
-                UNEXPECTED="${UNEXPECTED:+$UNEXPECTED, }$HIT"
-              fi
-            done <<< "$FLAGGED_LIST"
-
-            FLAGGED_BY=$(echo "$FLAGGED_LIST" | tr '\n' ',' | sed 's/,$//; s/,/, /g')
-            FLAGGED_COUNT=$(echo "$FLAGGED_LIST" | grep -c '[^[:space:]]' || true)
-
-            # The count comes from stats.malicious but the names come from the
-            # results map. If we couldn't enumerate every detection we have no
-            # basis for calling them all known — don't wave it through.
-            if [[ "$FLAGGED_COUNT" -lt "$MALICIOUS" ]]; then
-              UNEXPECTED="${UNEXPECTED:+$UNEXPECTED, }$((MALICIOUS - FLAGGED_COUNT)) unidentified engine(s)"
-            fi
-
-            ICON="✅"
-            DETAIL=""
-            if [[ "$MALICIOUS" -gt 0 ]]; then
-              ICON="⚠️"
-              DETAIL=" (${FLAGGED_BY:-engine list unavailable})"
-              if [[ -z "$UNEXPECTED" && -n "$FLAGGED_BY" ]]; then
-                DETAIL=" — known false positives ($FLAGGED_BY)"
-              fi
-            fi
-            if [[ -n "$UNEXPECTED" || "$MALICIOUS" -ge "$MAX_DETECTIONS" ]]; then
-              ICON="❌"
-            fi
-
-            # File reports are keyed on the file's SHA256 — the same hash already
-            # published in checksums.txt, so readers can verify the link points at
-            # the binary they downloaded.
-            echo "- \`$NAME\`: $ICON $MALICIOUS malicious detection(s)$DETAIL — [VirusTotal report](https://www.virustotal.com/gui/file/$SHA)" >> virustotal-report.txt
-
-            if [[ -n "$UNEXPECTED" ]]; then
-              echo "::error::$NAME was flagged by engine(s) outside the known false-positive list: $UNEXPECTED (all detections: ${FLAGGED_BY:-unknown})"
-              FAILED=1
-            elif [[ "$MALICIOUS" -ge "$MAX_DETECTIONS" ]]; then
-              echo "::error::$NAME has $MALICIOUS malicious detection(s), at or over the ceiling of $MAX_DETECTIONS: ${FLAGGED_BY:-unknown engines}"
-              FAILED=1
-            elif [[ "$MALICIOUS" -gt 0 ]]; then
-              echo "::warning::$NAME has $MALICIOUS malicious detection(s), all from known false-positive engines: $FLAGGED_BY"
-            fi
-            echo "::endgroup::"
-          done
-
-          echo "=== virustotal-report.txt ==="
-          cat virustotal-report.txt
-
-          exit "$FAILED"
-
-      - name: Append VirusTotal results to release notes
-        if: always()
-        run: |
-          set -euo pipefail
-
-          if [[ ! -f virustotal-report.txt ]]; then
-            echo "No virustotal-report.txt produced; skipping notes update."
-            exit 0
-          fi
-
-          START="<!-- virustotal-scan:start -->"
-          END="<!-- virustotal-scan:end -->"
-
-          {
-            echo "$START"
-            echo "### VirusTotal Scan"
-            cat virustotal-report.txt
-            echo "$END"
-          } > vt-section.md
-
-          gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" --jq '.body // ""' > current-notes.md
-
-          # Strip any previous VirusTotal section (idempotent re-runs) then append the fresh one.
-          awk -v start="$START" -v end="$END" '
-            $0 == start { skip=1; next }
-            $0 == end   { skip=0; next }
-            !skip
-          ' current-notes.md > notes-base.md
-
-          { cat notes-base.md; echo; echo; cat vt-section.md; } > new-notes.md
-
-          jq -n --rawfile body new-notes.md '{body: $body}' \
-            | gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" -X PATCH --input -
-
-          echo "Release notes updated with VirusTotal section."
-
-  # ───────────────────────────────────────────────────────────────────────────
-  # 5. Publish the draft release. Only runs if the VirusTotal scan passed.
-  # ───────────────────────────────────────────────────────────────────────────
-  publish-release:
-    name: Publish release
-    needs: [find-release, virustotal]
-    runs-on: ubuntu-latest
-    env:
-      GH_TOKEN:     ${{ secrets.GITHUB_TOKEN }}
-      RELEASE_ID:   ${{ needs.find-release.outputs.release_id }}
-      RELEASE_TAG:  ${{ needs.find-release.outputs.tag }}
-      RELEASE_NAME: ${{ needs.find-release.outputs.name }}
-
-    steps:
-      # tag_name must be re-sent explicitly here: PATCHing draft=false alone
-      # can make GitHub re-derive the tag association and spawn a stray
-      # "untagged-<hash>" tag instead of keeping the original release tag.
-      - name: Flip draft release to published
-        run: |
-          gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" \
-            -X PATCH -f draft=false -f tag_name="$RELEASE_TAG"
-          echo "Published release $RELEASE_TAG"
-
-      # The GITHUB_TOKEN-authored publish above does not trigger other
-      # workflows' `on: release: published` listeners (GitHub blocks
-      # recursive workflow runs from the default token) — so discord-release.yml
-      # never fires on its own. workflow_dispatch is explicitly exempt from
-      # that restriction, so dispatch it directly instead.
-      - name: Notify Discord via workflow_dispatch
-        run: |
-          gh workflow run discord-release.yml \
-            --repo "$GITHUB_REPOSITORY" \
-            -f title="$RELEASE_NAME" \
-            -f tag="$RELEASE_TAG"
-          echo "Dispatched discord-release.yml for $RELEASE_TAG"
+          body_path: docs/RELEASE_NOTES_v0.1.0.md
+          files: |
+            dist/f1_dual_engineer_*.exe
+            dist/checksums.txt
+          fail_on_unmatched_files: true

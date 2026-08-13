@@ -81,7 +81,7 @@ class BackendAppMgr(PngAppMgrBase):
             title="HTTP port in use",
             message="The HTTP port is already in use by another process. Please close the other process and try again or change the port.",
             can_restart=False,
-            settings_field='Network -> "Pits n\' Giggles HTTP Server Port"'
+            settings_field='Network -> "F1 Dual Engineer HTTP Server Port"'
         ))
         self.register_exit_reason(PNG_ERROR_CODE_UDP_TELEMETRY_PORT_IN_USE, ExitReason(
             code=PNG_ERROR_CODE_UDP_TELEMETRY_PORT_IN_USE,

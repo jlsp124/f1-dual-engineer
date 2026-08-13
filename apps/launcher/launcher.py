@@ -142,13 +142,13 @@ def _cleanup_temp_icon():
         _temp_icon_file = None
 
 def smoke_test(file_content: str) -> None:
-    """Create a test file at the log file path. (CWD for windows, ~/Library/Application Support/pits_n_giggles for mac)
+    """Create a test file at the user-data path for packaged-build verification.
         Parent process is responsible to test if the file exists.
 
         Args:
             file_content (str): The content to write to the file.
     """
-    path = resolve_user_file("png_smoke_test.txt")
+    path = resolve_user_file("f1_dual_engineer_smoke_test.txt")
     with open(path, "w", encoding='utf-8') as f:
         f.write(file_content)
 
@@ -212,7 +212,7 @@ def _acquire_single_instance_lock() -> QLockFile:
 
 def entry_point() -> None:
     """
-    Main entry point for the Pits n' Giggles application.
+    Main entry point for the F1 Dual Engineer application.
 
     Handles:
         - Running smoke tests if the --smoke-test flag is provided.

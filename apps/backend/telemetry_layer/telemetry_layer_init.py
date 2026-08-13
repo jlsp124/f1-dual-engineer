@@ -55,6 +55,7 @@ def initTelemetryLayer(
         shutdown_event (asyncio.Event): Shutdown event
         session_state (SessionState): Handle to the session state
         tasks (List[asyncio.Task]): List of tasks to be executed
+        dual_engineer_service (DualEngineerService): Dual-driver runtime coordinator
 
     Returns:
         F1TelemetryHandler: Telemetry handler

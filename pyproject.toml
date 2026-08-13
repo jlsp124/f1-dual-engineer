@@ -4,7 +4,8 @@ description = "Dual-driver F1 25 telemetry, live race engineering, coaching, exp
 authors = [
     {name = "F1 Dual Engineer contributors"}
 ]
-license = {text = "MIT"}
+license = "MIT"
+license-files = ["LICENSE"]
 readme = "README.md"
 requires-python = ">=3.12,<3.14"
 dependencies = [

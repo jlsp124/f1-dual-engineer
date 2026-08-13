@@ -22,7 +22,7 @@
 
 # --------------------------------------------------------------------------------------------------
 
-# PyInstaller Spec File for Pits n' Giggles
+# PyInstaller spec file for F1 Dual Engineer
 # Onefile build with embedded dispatcher (via --module)
 
 # Add 'scripts/' to sys.path so 'version.py' can be imported
@@ -199,7 +199,7 @@ if platform.system() == "Darwin":
         exe,
         name=f"{APP_BASENAME}.app",
         icon=ICON_PATH_MAC,
-        bundle_identifier="com.pitsngiggles.app",
+        bundle_identifier="io.github.jlsp124.f1dualengineer",
     )
 
 coll = COLLECT(
