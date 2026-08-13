@@ -170,7 +170,7 @@ class BaseWebServer:
         hosts = {"localhost", "127.0.0.1"}
         if bind_address and bind_address != "0.0.0.0":
             hosts.add(bind_address.casefold())
-        for name in {socket.gethostname(), socket.getfqdn()}:
+        for name in (socket.gethostname(), socket.getfqdn()):
             if name:
                 hosts.add(name.rstrip(".").casefold())
         try:
