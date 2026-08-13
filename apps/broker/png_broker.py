@@ -32,6 +32,7 @@ from lib.child_proc_mgmt import (notify_parent_init_complete,
                                  report_pid_from_child)
 from lib.config import PngSettings, load_config_from_json
 from lib.error_status import PNG_LOST_CONN_TO_PARENT, PngError
+from lib.file_path import resolve_user_file
 from lib.ipc import IpcPubSubBroker, IpcRouter, IpcServerSync
 from lib.logger import get_logger
 from meta.meta import APP_NAME
@@ -49,7 +50,8 @@ def parseArgs() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=f"{APP_NAME} Pit Wall")
 
     # Add command-line arguments with default values
-    parser.add_argument("--config-file", nargs="?", default="png_config.json", help="Configuration file name (optional)")
+    default_config = resolve_user_file("png_config.json") if sys.platform == "win32" else "png_config.json"
+    parser.add_argument("--config-file", nargs="?", default=default_config, help="Configuration file name (optional)")
     parser.add_argument("--debug", action="store_true", help="Enable debug mode")
 
     # Parse the command-line arguments

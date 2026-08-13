@@ -34,28 +34,26 @@ def get_app_base_dir() -> Path:
     """
     Returns the base directory for user-writable app data.
 
-    - On macOS: ~/Library/Application Support/pits_n_giggles/
+    - On Windows: %LOCALAPPDATA%/f1_dual_engineer/
+    - On macOS: ~/Library/Application Support/f1_dual_engineer/
     - On other platforms: current working directory
     """
-    if sys.platform != "darwin":
-        return Path(".")
-    base_dir = Path.home() / "Library" / "Application Support" / APP_NAME_SNAKE
-    base_dir.mkdir(parents=True, exist_ok=True)
-    return base_dir
+    if sys.platform in {"win32", "darwin"}:
+        return get_app_fixed_dir()
+    return Path(".")
 
 
 def get_app_fixed_dir() -> Path:
     """
     Returns a fixed, cwd-independent per-user directory for app data.
 
-    Unlike :func:`get_app_base_dir`, this never resolves to the current working
-    directory, so files placed here are shared across every instance of the app
-    regardless of where it was launched from (needed e.g. for a single-instance
-    lock file).
+    This never resolves to the current working directory, so files placed here
+    are shared across every instance of the app regardless of where it was
+    launched from (needed e.g. for a single-instance lock file).
 
-    - On macOS: ~/Library/Application Support/pits_n_giggles/
-    - On Windows: %LOCALAPPDATA%/pits_n_giggles/
-    - On other platforms: ~/.local/state/pits_n_giggles/
+    - On macOS: ~/Library/Application Support/f1_dual_engineer/
+    - On Windows: %LOCALAPPDATA%/f1_dual_engineer/
+    - On other platforms: ~/.local/state/f1_dual_engineer/
     """
     if sys.platform == "win32":
         base = os.environ.get("LOCALAPPDATA") or (Path.home() / "AppData" / "Local")
@@ -73,7 +71,8 @@ def resolve_user_file(filename: str) -> str:
     """
     Resolves the given filename to a user-writable path.
 
-    - On macOS, uses ~/Library/Application Support/pits_n_giggles/
+    - On Windows, uses %LOCALAPPDATA%/f1_dual_engineer/
+    - On macOS, uses ~/Library/Application Support/f1_dual_engineer/
     - On other platforms, uses the path as-is (relative to current working directory)
 
     Args:

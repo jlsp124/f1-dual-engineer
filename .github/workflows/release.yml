@@ -52,15 +52,26 @@ jobs:
         shell: pwsh
         run: |
           $exe = Get-Item "dist\f1_dual_engineer_*.exe"
-          $marker = "f1_dual_engineer_smoke_test.txt"
+          $runtimeRoot = Join-Path $env:LOCALAPPDATA "f1_dual_engineer"
+          $marker = Join-Path $runtimeRoot "f1_dual_engineer_smoke_test.txt"
+          $launchDir = Join-Path $env:RUNNER_TEMP "f1-dual-engineer-nonproject-cwd"
+          New-Item -ItemType Directory -Path $launchDir -Force | Out-Null
           Remove-Item -LiteralPath $marker -ErrorAction SilentlyContinue
-          & $exe.FullName --smoke-test hello-smoke
+          Push-Location $launchDir
+          try {
+            & $exe.FullName --smoke-test hello-smoke
+          } finally {
+            Pop-Location
+          }
           $deadline = (Get-Date).AddSeconds(20)
           while (-not (Test-Path -LiteralPath $marker) -and (Get-Date) -lt $deadline) {
             Start-Sleep -Milliseconds 250
           }
           if (-not (Test-Path -LiteralPath $marker) -or (Get-Content -LiteralPath $marker -Raw) -ne "hello-smoke") {
             throw "Frozen launcher smoke marker was not written correctly"
+          }
+          if ((Get-ChildItem -LiteralPath $launchDir -Force | Measure-Object).Count -ne 0) {
+            throw "Frozen launcher wrote mutable files beneath its current working directory"
           }
 
       - name: Generate checksum
@@ -82,7 +93,7 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          body_path: docs/RELEASE_NOTES_v0.1.0.md
+          body_path: docs/RELEASE_NOTES_v0.1.1.md
           files: |
             dist/f1_dual_engineer_*.exe
             dist/checksums.txt

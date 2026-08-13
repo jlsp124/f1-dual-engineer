@@ -76,7 +76,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--config-file",
         nargs="?",
-        default="png_config.json",
+        default=resolve_user_file("png_config.json") if sys.platform == "win32" else "png_config.json",
         help="Configuration file name (optional)"
     )
 

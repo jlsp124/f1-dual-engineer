@@ -22,18 +22,18 @@ py -3.13 -m poetry run python scripts/build.py
 `scripts/build.py` performs a clean frontend and PyInstaller build. The Windows output for this version is:
 
 ```text
-dist\f1_dual_engineer_0.1.0.exe
+dist\f1_dual_engineer_0.1.1.exe
 ```
 
 The version and product identity come from `meta/meta.py`. `scripts/png.spec` collects frontend resources, assets, QML files, package metadata, and allowed subsystem modules.
 
 ## Validate the artifact
 
-The smoke mode exercises the frozen launcher and writes a deterministic marker in the current directory:
+The smoke mode exercises the frozen launcher and writes a deterministic marker in the per-user application data directory:
 
 ```powershell
-.\dist\f1_dual_engineer_0.1.0.exe --smoke-test hello-smoke
-Get-Content .\f1_dual_engineer_smoke_test.txt
+.\dist\f1_dual_engineer_0.1.1.exe --smoke-test hello-smoke
+Get-Content "$env:LOCALAPPDATA\f1_dual_engineer\f1_dual_engineer_smoke_test.txt"
 ```
 
 For an end-to-end dashboard check, start the frozen backend module with a test config and request its root URL. Normal users should launch the executable without arguments and start the backend in the GUI.

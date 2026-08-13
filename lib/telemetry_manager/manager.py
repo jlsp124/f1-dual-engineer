@@ -25,6 +25,7 @@
 import asyncio
 import json
 import os
+import sys
 from datetime import datetime
 from logging import Logger
 from pathlib import Path
@@ -32,6 +33,7 @@ from typing import Awaitable, Callable, Dict, Optional
 
 from lib.event_counter import EventCounter
 from lib.f1_types import F1PacketBase, F1PacketType
+from lib.file_path import resolve_user_file
 
 from lib.socket_receiver import TelemetryTransport
 
@@ -204,17 +206,19 @@ class AsyncF1TelemetryManager:
                 packet_file,
             )
 
-    def _dumpPacketToFile(self, packet_obj: object, directory: str = "crash_packet_dumps") -> str:
+    def _dumpPacketToFile(self, packet_obj: object, directory: Optional[str] = None) -> str:
         """Dump packet JSON to a timestamped file and return the file path.
 
         Args:
             packet_obj (object): The packet object to dump.
-            directory (str, optional): The directory to dump the packet to. Defaults to "crash_packet_dumps".
+            directory (str, optional): The directory to dump the packet to. Defaults to the app data directory.
 
         Returns:
             str: The file path of the dumped packet.
 
         """
+        if directory is None:
+            directory = resolve_user_file("crash_packet_dumps") if sys.platform == "win32" else "crash_packet_dumps"
         os.makedirs(directory, exist_ok=True)
 
         existing = sorted(
