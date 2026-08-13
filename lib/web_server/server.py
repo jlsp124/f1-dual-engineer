@@ -31,6 +31,7 @@ from typing import (Any, Awaitable, Callable, Coroutine, Dict, List, Optional,
 from urllib.parse import urlsplit
 
 import msgpack
+import psutil
 import socketio
 import uvicorn
 import wsproto
@@ -166,17 +167,19 @@ class BaseWebServer:
 
     @staticmethod
     def _discover_dashboard_hosts(bind_address: str) -> set[str]:
-        """Build a server-owned allowlist for loopback and local interface names."""
+        """Build a server-owned allowlist without blocking on DNS resolution."""
         hosts = {"localhost", "127.0.0.1"}
         if bind_address and bind_address != "0.0.0.0":
             hosts.add(bind_address.casefold())
-        for name in (socket.gethostname(), socket.getfqdn()):
-            if name:
-                hosts.add(name.rstrip(".").casefold())
+        hostname = socket.gethostname()
+        if hostname:
+            hosts.add(hostname.rstrip(".").casefold())
         try:
-            for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
-                hosts.add(info[4][0].casefold())
-        except socket.gaierror:
+            for addresses in psutil.net_if_addrs().values():
+                for address in addresses:
+                    if address.family == socket.AF_INET:
+                        hosts.add(address.address.casefold())
+        except (OSError, RuntimeError):
             pass
         return hosts
 
