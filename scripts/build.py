@@ -65,18 +65,26 @@ def main():
         "VITE_EXTERNAL_LINK_LABEL": "Legacy View",
         "VITE_DISABLE_ANALYTICS": "true",
         "VITE_APP_NAME": PRODUCT_NAME,
+        "CI": "true",
         # Prevent MSYS2/Git Bash from converting POSIX paths (e.g. /legacy/{slug})
         # to Windows paths (e.g. C:/Program Files/Git/legacy/{slug}).
         "MSYS_NO_PATHCONV": "1",
         "MSYS2_ARG_CONV_EXCL": "*",
     }
-    subprocess.run("pnpm install", cwd=viewer_source, check=True, shell=True)
+    pnpm_executable = shutil.which("pnpm")
+    if not pnpm_executable:
+        raise RuntimeError("pnpm is required to build the embedded save viewer")
     subprocess.run(
-        "pnpm build --mode production",
+        [pnpm_executable, "install", "--frozen-lockfile"],
         cwd=viewer_source,
         env=build_env,
         check=True,
-        shell=True,
+    )
+    subprocess.run(
+        [pnpm_executable, "build", "--mode", "production"],
+        cwd=viewer_source,
+        env=build_env,
+        check=True,
     )
 
     # 2. Run PyInstaller
